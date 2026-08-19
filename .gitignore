@@ -1,0 +1,57 @@
+# 依赖
+node_modules/
+website/node_modules/
+server/node_modules/
+
+# 构建产物
+website/dist/
+website/dist-ssr/
+
+# 数据库
+server/data/*.db
+server/data/*.db-shm
+server/data/*.db-wal
+
+# 系统文件
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# 编辑器
+.vscode/
+.idea/
+*.suo
+
+# 日志
+*.log
+npm-debug.log*
+
+# 临时文件
+tmp/
+.temp/
+*.tmp
+
+# 桌面备份（不纳入仓库）
+*备份*
+# 临时/非必要文件（不纳入仓库）
+test.cjs
+fix-script.js
+create-spec.js
+update_docs.py
+ppt截图-shots.cjs
+_doc_text.txt
+_*.txt
+
+# 素材/历史/预览目录
+cover-previews/
+login-previews/
+logo-versions/
+历史版本-docx/
+ppt工具/
+ppt截图/
+木叶平台介绍PPT/
+木叶平台介绍PPT-screenshots/
+doc-tooth-chart.png
+logo-clean.png
+logo-original.jpg
+logo-white-check.jpg

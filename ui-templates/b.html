@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>模板 B · 纸面网格（技工图纸风）</title>
+<style>
+  :root { --paper:#fdfaf6; --ink:#1c1a17; --sub:#6f6a5e; --dim:#a39c8c; --line:#ddd6c6;
+    --green:#1e5c46; --green-soft:#eef4f0; --red:#b3402f; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--paper); color:var(--ink); height:100vh; overflow:hidden;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .mono { font-family:ui-monospace,Consolas,Menlo,monospace; font-variant-numeric:tabular-nums; }
+  .serif { font-family:"Songti SC","STSong","SimSun",serif; }
+  .lbl { font-size:10.5px; letter-spacing:.2em; text-transform:uppercase; color:var(--dim); }
+
+  /* 外框：整张页面是一张图纸 */
+  .sheet { height:100vh; display:flex; flex-direction:column; border:1px solid var(--line); margin:14px; background:var(--paper); }
+
+  /* 顶栏 */
+  .top { display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid var(--line); }
+  .top .l { display:flex; align-items:center; }
+  .top .logo-cell { display:flex; align-items:center; gap:10px; padding:14px 22px; border-right:1px solid var(--line); }
+  .top .logo-cell img { width:30px; height:30px; }
+  .top .logo-cell b { font-size:15px; letter-spacing:.04em; }
+  .top nav { display:flex; }
+  .top nav a { padding:19px 20px; font-size:13.5px; color:var(--sub); text-decoration:none; border-right:1px solid var(--line); }
+  .top nav a.on { color:var(--green); font-weight:600; box-shadow:inset 0 -2px 0 var(--green); }
+  .top .r { display:flex; align-items:center; }
+  .top .who { padding:0 20px; font-size:12.5px; color:var(--sub); border-left:1px solid var(--line); align-self:stretch; display:flex; align-items:center; }
+  .top .out { padding:0 22px; font-size:13px; color:var(--ink); border-left:1px solid var(--line); background:none; border-top:none; border-bottom:none; border-right:none; align-self:stretch; cursor:pointer; }
+  .top .out:hover { background:var(--green); color:#fff; }
+
+  /* 标题行 */
+  .hero { display:flex; justify-content:space-between; align-items:flex-end; padding:30px 34px 26px; border-bottom:1px solid var(--line); }
+  .hero h1 { font-size:42px; font-weight:600; letter-spacing:.02em; }
+  .hero .sub { font-size:13px; color:var(--sub); margin-top:8px; }
+  .cta { display:inline-flex; align-items:center; gap:10px; background:var(--green); color:#fdfaf6; border:none;
+    padding:14px 26px; font-size:15px; font-weight:600; letter-spacing:.06em; cursor:pointer; }
+  .cta::after { content:"→"; font-family:ui-monospace,monospace; }
+
+  /* 统计格：四等分发丝线 */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); border-bottom:1px solid var(--line); }
+  .stat { padding:22px 34px 24px; border-right:1px solid var(--line); }
+  .stat:last-child { border-right:none; }
+  .stat .v { font-size:40px; font-weight:600; margin-top:10px; line-height:1; }
+  .stat .u { font-size:13px; color:var(--sub); font-weight:400; margin-left:6px; }
+  .stat.green .v { color:var(--green); }
+
+  /* 表格 */
+  .listhead { display:flex; justify-content:space-between; align-items:center; padding:16px 34px 12px; }
+  table { width:100%; border-collapse:collapse; font-size:14.5px; }
+  th { text-align:left; font-weight:500; padding:10px 34px; border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:#f7f2e9; }
+  td { padding:15px 34px; border-bottom:1px solid var(--line); }
+  .no { color:var(--sub); font-size:13px; }
+  .pill { display:inline-block; font-size:12.5px; padding:3px 12px; border-radius:999px; }
+  .p-pending { color:#8a5a13; background:#f6ecd8; }
+  .p-doing { color:#20557f; background:#e3edf6; }
+  .p-done { color:var(--green); background:var(--green-soft); }
+  .p-ret { color:var(--red); background:#f6e5e1; }
+  .urgent { background:var(--red); color:#fff; font-size:11.5px; font-weight:600; border-radius:3px; padding:2px 7px; margin-left:8px; letter-spacing:.05em; }
+  .foot { margin-top:auto; padding:12px 34px; border-top:1px solid var(--line); display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="top">
+    <div class="l">
+      <div class="logo-cell"><img src="logo-icon.png" alt="木叶"><b>木叶义齿设计平台</b></div>
+      <nav>
+        <a class="on" href="#">工作台</a><a href="#">提交订单</a><a href="#">我的订单</a><a href="#">积分明细</a><a href="#">消息</a>
+      </nav>
+    </div>
+    <div class="r">
+      <div class="who">明州口腔 · mingzhou</div>
+      <button class="out">退出登录</button>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div>
+      <div class="lbl mono">HOSPITAL CONSOLE — 01</div>
+      <h1 class="serif">工作台</h1>
+      <div class="sub">牙位、口扫文件与照片提交后，设计师按分组匹配自动接单</div>
+    </div>
+    <button class="cta">提交新订单</button>
+  </div>
+
+  <div class="stats">
+    <div class="stat green"><div class="lbl mono">积分余额 POINTS</div><div class="v mono">361<span class="u">分</span></div></div>
+    <div class="stat"><div class="lbl mono">本月订单 MONTH</div><div class="v mono">12<span class="u">单</span></div></div>
+    <div class="stat"><div class="lbl mono">进行中 ACTIVE</div><div class="v mono">3<span class="u">单</span></div></div>
+    <div class="stat"><div class="lbl mono">待处理 RETURNED</div><div class="v mono" style="color:var(--red)">1<span class="u">单</span></div></div>
+  </div>
+
+  <div class="listhead"><span class="lbl mono">RECENT ORDERS — 02 / 最近订单</span><span class="lbl mono">单位：颗 / 件</span></div>
+  <table>
+    <tr><th class="lbl mono">单号 NO.</th><th class="lbl mono">设计类型 TYPE</th><th class="lbl mono">牙位 / 范围</th><th class="lbl mono">状态 STATUS</th><th class="lbl mono">提交时间 TIME</th></tr>
+    <tr><td class="no mono">MY-20260730-008</td><td>马龙桥设计</td><td>全口 · 1 件</td><td><span class="pill p-pending">待接单</span></td><td class="mono" style="color:var(--dim)">07-30 18:32</td></tr>
+    <tr><td class="no mono">MY-20260729-007</td><td>全瓷冠 / 基台上部冠</td><td>上左3 · 上左4</td><td><span class="pill p-doing">设计中</span></td><td class="mono" style="color:var(--dim)">07-29 14:05</td></tr>
+    <tr><td class="no mono">MY-20260728-006</td><td>贴面 / 嵌体设计<span class="urgent">加急件</span></td><td>下右6</td><td><span class="pill p-done">已完成</span></td><td class="mono" style="color:var(--dim)">07-28 09:41</td></tr>
+    <tr><td class="no mono">MY-20260727-005</td><td>即刻设计</td><td>上右1 · 上右2</td><td><span class="pill p-ret">已退回</span></td><td class="mono" style="color:var(--dim)">07-27 16:20</td></tr>
+  </table>
+
+  <div class="foot"><span class="lbl mono">MUYE DENTAL DESIGN PLATFORM</span><span class="lbl mono">PAGE 1 / 1</span></div>
+</div>
+</body>
+</html>

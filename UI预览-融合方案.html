@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>木叶义齿设计平台 · UI 融合方案预览</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* ========== 两套皮肤通过 body[data-skin] 切换 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'Figtree', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background: #fdfaf6;
+  color: #1c1917;
+  padding: 32px 24px 80px;
+  line-height: 1.6;
+}
+.wrap { max-width: 960px; margin: 0 auto; }
+
+/* ---------- 切换器 ---------- */
+.switcher {
+  position: sticky; top: 0; z-index: 10;
+  background: #fdfaf6; border-bottom: 1px solid #e7e0d0;
+  padding: 12px 0; margin: -32px -24px 32px; padding-left: 24px; padding-right: 24px;
+}
+.switcher-inner { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.switcher .lbl { font-size: 13px; color: #78716c; }
+.switcher button {
+  border: 1px solid #d6d3d1; background: #fff; padding: 6px 16px;
+  font-size: 13.5px; cursor: pointer; border-radius: 999px; color: #57534e;
+}
+.switcher button.on { background: #1e5c46; color: #fafaf9; border-color: #1e5c46; }
+.hint { margin-left: auto; font-size: 12px; color: #a8a29e; }
+
+/* ---------- 区块 ---------- */
+section { margin-bottom: 48px; }
+.sec-title { font-size: 15px; font-weight: 600; color: #44403c; margin-bottom: 4px; }
+.sec-note { font-size: 12.5px; color: #a8a29e; margin-bottom: 16px; }
+.sec-note b { color: #1e5c46; font-weight: 600; }
+
+/* ========== 导航 ========== */
+.nav { display: flex; gap: 4px; margin-bottom: 8px; }
+.nav button { font-size: 14px; cursor: pointer; font-family: inherit; }
+/* 旧：矩形色块 */
+body[data-skin="old"] .nav { border: 1px solid #ddd6c6; background: #fff; padding: 4px; display: inline-flex; }
+body[data-skin="old"] .nav button { border: none; background: transparent; padding: 6px 16px; color: #78716c; border-radius: 0; }
+body[data-skin="old"] .nav button.on { background: #1e5c46; color: #fafaf9; }
+/* 新：底部指示线 */
+body[data-skin="new"] .nav { border-bottom: 2px solid #e7e0d0; gap: 8px; }
+body[data-skin="new"] .nav button { border: none; background: transparent; padding: 8px 16px; color: #78716c; margin-bottom: -2px; border-bottom: 2px solid transparent; }
+body[data-skin="new"] .nav button.on { color: #1e5c46; font-weight: 600; border-bottom-color: #1e5c46; }
+body[data-skin="new"] .nav button:hover:not(.on) { color: #44403c; }
+
+/* ========== 按钮 ========== */
+.btnrow { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.btn { font-family: inherit; font-size: 14.5px; font-weight: 500; letter-spacing: .04em; cursor: pointer; padding: 10px 20px; min-height: 44px; transition: all .15s; }
+.btn:active { transform: scale(.98); }
+.btn-primary { background: #1e5c46; color: #fafaf9; border: none; }
+.btn-primary:hover { background: #256a52; }
+.btn-ghost { background: #fff; color: #44403c; border: 1px solid #d6d3d1; }
+.btn-ghost:hover { border-color: #78716c; color: #1c1917; }
+.btn-danger { background: #fff; color: #dc2626; border: 1px solid #fca5a5; }
+.btn-danger:hover { background: #fef2f2; }
+.btn-disabled { background: #1e5c46; color: #fafaf9; border: none; opacity: .4; cursor: not-allowed; }
+body[data-skin="old"] .btn { border-radius: 0; }
+body[data-skin="new"] .btn { border-radius: 4px; }
+
+/* ========== 状态徽章 ========== */
+.pills { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { font-size: 12px; font-weight: 500; padding: 2px 10px; border-radius: 999px; }
+.pill-amber { background: #fff7ed; color: #c2410c; box-shadow: inset 0 0 0 1px #fed7aa; }
+.pill-blue { background: #eff6ff; color: #1d4ed8; box-shadow: inset 0 0 0 1px #bfdbfe; }
+.pill-green { background: #ecfdf5; color: #047857; box-shadow: inset 0 0 0 1px #a7f3d0; }
+.pill-red { background: #fef2f2; color: #b91c1c; box-shadow: inset 0 0 0 1px #fecaca; }
+.pill-stone { background: #f5f5f4; color: #57534e; box-shadow: inset 0 0 0 1px #e7e5e4; }
+
+/* ========== 统计卡片 ========== */
+.stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+@media (max-width: 720px) { .stats { grid-template-columns: repeat(3, 1fr); } }
+.stat { background: #fff; border: 1px solid #e7e5e4; padding: 14px; text-align: left; cursor: pointer; transition: all .15s; font-family: inherit; }
+.stat .k { font-size: 11px; letter-spacing: .06em; color: #a8a29e; text-transform: uppercase; }
+.stat .v { font-family: 'Figtree', sans-serif; font-size: 26px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.stat .v.green { color: #059669; } .stat .v.amber { color: #d97706; } .stat .v.red { color: #dc2626; }
+.stat.hot { background: #fef2f2; border-color: #fecaca; }
+body[data-skin="old"] .stat { border-radius: 2px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+body[data-skin="new"] .stat { border-radius: 6px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+body[data-skin="new"] .stat:hover { box-shadow: 0 4px 12px rgba(0,0,0,.08); border-color: #1e5c46; }
+
+/* ========== 订单列表行 ========== */
+.orders { border-top: 1px solid #e7e5e4; }
+.order { border-bottom: 1px solid #e7e5e4; padding: 16px 8px; transition: background .15s; }
+body[data-skin="new"] .order:hover { background: rgba(30,92,70,.035); }
+.order-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+.order-no { font-family: 'Figtree', sans-serif; font-size: 13.5px; color: #78716c; font-variant-numeric: tabular-nums; }
+.order-meta { display: flex; gap: 20px; flex-wrap: wrap; font-size: 13.5px; color: #57534e; margin-top: 8px; }
+.order-meta b { color: #1c1917; font-weight: 600; }
+.urgent { background: #d97706; color: #fff; font-size: 11px; padding: 1px 8px; border-radius: 999px; font-weight: 600; }
+/* 时间线 */
+.tl { display: flex; align-items: flex-start; margin-top: 12px; }
+.tl-step { display: flex; align-items: flex-start; }
+.tl-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 2px; }
+.tl-dot.done { background: #1e5c46; }
+.tl-dot.todo { background: #fff; border: 1px solid #d6d3d1; }
+.tl-line { width: 40px; height: 1px; margin-top: 6px; }
+.tl-line.done { background: #1e5c46; } .tl-line.todo { background: #e7e5e4; }
+.tl-label { font-size: 12px; color: #a8a29e; text-align: center; }
+.tl-label.done { color: #44403c; font-weight: 500; }
+.tl-time { font-size: 10.5px; color: #a8a29e; font-family: 'Figtree', sans-serif; text-align: center; }
+.tl-node { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0 4px; }
+
+/* ========== 表格 ========== */
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+th { text-align: left; font-size: 11px; letter-spacing: .08em; color: #a8a29e; font-weight: 500; text-transform: uppercase; padding: 8px 12px; border-bottom: 1px solid #e7e5e4; }
+td { padding: 10px 12px; border-bottom: 1px solid #f5f5f4; color: #44403c; }
+td.mono { font-family: 'Figtree', sans-serif; font-variant-numeric: tabular-nums; }
+body[data-skin="old"] tr:hover td { background: transparent; }
+body[data-skin="new"] tbody tr:nth-child(even) td { background: #faf7f1; }
+body[data-skin="new"] tbody tr:hover td { background: rgba(30,92,70,.05); }
+
+/* ========== 表单 ========== */
+.form { max-width: 420px; display: flex; flex-direction: column; gap: 16px; }
+.field label { display: block; font-size: 13.5px; color: #44403c; margin-bottom: 6px; font-weight: 500; }
+.field .req { color: #dc2626; }
+input[type=text] {
+  width: 100%; padding: 10px 12px; font-size: 16px; font-family: inherit;
+  border: 1px solid #d6d3d1; background: #fff; color: #1c1917; outline: none; transition: all .15s;
+}
+input::placeholder { color: #a8a29e; }
+body[data-skin="old"] input[type=text] { border-radius: 2px; }
+body[data-skin="old"] input[type=text]:focus { box-shadow: 0 0 0 2px #1e5c46; border-color: transparent; }
+body[data-skin="new"] input[type=text] { border-radius: 4px; }
+body[data-skin="new"] input[type=text]:focus { box-shadow: 0 0 0 3px rgba(30,92,70,.3); border-color: #1e5c46; }
+
+/* ========== 上传区 ========== */
+.uploads { display: flex; gap: 24px; flex-wrap: wrap; }
+.up-title { font-size: 13px; color: #57534e; margin-bottom: 8px; }
+.up-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 6px 12px; border-radius: 999px; font-family: 'Figtree', sans-serif; }
+.chip-blue { background: #f0f9ff; border: 1px solid #7dd3fc; color: #075985; }
+.chip-green { background: #ecfdf5; border: 1px solid #6ee7b7; color: #065f46; }
+.up-add { border: 1.5px dashed; background: transparent; padding: 6px 14px; font-size: 13px; cursor: pointer; border-radius: 999px; font-family: inherit; }
+.up-add.blue { border-color: #7dd3fc; color: #0284c7; }
+.up-add.green { border-color: #6ee7b7; color: #059669; }
+
+/* ========== 弹窗示例 ========== */
+.modal {
+  max-width: 420px; background: #fff; border: 1px solid #e7e5e4; padding: 24px;
+}
+.modal h4 { font-size: 16px; font-weight: 600; margin-bottom: 8px; }
+.modal p { font-size: 13.5px; color: #57534e; margin-bottom: 20px; line-height: 1.6; }
+.modal .btnrow { justify-content: flex-end; }
+body[data-skin="old"] .modal { border-radius: 0; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+body[data-skin="new"] .modal { border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+
+.footer-note { margin-top: 48px; padding-top: 16px; border-top: 1px solid #e7e0d0; font-size: 12px; color: #a8a29e; text-align: center; }
+</style>
+</head>
+<body data-skin="new">
+
+<div class="switcher">
+  <div class="switcher-inner">
+    <span class="lbl">对比切换：</span>
+    <button id="btnOld" onclick="setSkin('old')">当前样式</button>
+    <button id="btnNew" class="on" onclick="setSkin('new')">新样式（融合方案）</button>
+    <span class="hint">来回点几下，重点看导航、按钮圆角、表格、卡片 hover</span>
+  </div>
+</div>
+
+<div class="wrap">
+
+  <!-- 导航 -->
+  <section>
+    <div class="sec-title">导航标签</div>
+    <div class="sec-note">改动：<b>色块切换 → 底部 2px 品牌绿指示线</b>，非激活项无背景</div>
+    <div class="nav">
+      <button class="on">设计师设计</button>
+      <button>AI 设计</button>
+      <button>用户服务</button>
+      <button>积分 361</button>
+      <button>消息 2</button>
+      <button>我的订单</button>
+    </div>
+  </section>
+
+  <!-- 按钮 -->
+  <section>
+    <div class="sec-title">按钮</div>
+    <div class="sec-note">改动：<b>直角 → 4px 圆角</b>，高度补足 44px 触控区，新增危险按钮样式</div>
+    <div class="btnrow">
+      <button class="btn btn-primary">提交订单</button>
+      <button class="btn btn-ghost">导出 CSV</button>
+      <button class="btn btn-danger">撤回订单</button>
+      <button class="btn btn-disabled">积分不足</button>
+    </div>
+  </section>
+
+  <!-- 状态徽章 -->
+  <section>
+    <div class="sec-title">状态徽章</div>
+    <div class="sec-note">改动：<b>琥珀色正式收编为"待处理"语义色</b>（待接单/加急/超时统一用它）</div>
+    <div class="pills">
+      <span class="pill pill-amber">待接单</span>
+      <span class="pill pill-blue">设计中</span>
+      <span class="pill pill-green">已完成</span>
+      <span class="pill pill-red">已退回</span>
+      <span class="pill pill-red">返工中</span>
+      <span class="pill pill-stone">已撤回</span>
+      <span class="pill pill-amber">加急件</span>
+    </div>
+  </section>
+
+  <!-- 统计卡片 -->
+  <section>
+    <div class="sec-title">概览统计卡片（可点击）</div>
+    <div class="sec-note">改动：<b>圆角 6px + hover 阴影加深、边框变绿</b>，提示可点击</div>
+    <div class="stats">
+      <button class="stat"><div class="k">总订单</div><div class="v">128</div></button>
+      <button class="stat"><div class="k">本月新增</div><div class="v">23</div></button>
+      <button class="stat"><div class="k">已完成</div><div class="v green">96</div></button>
+      <button class="stat"><div class="k">返工</div><div class="v amber">4</div></button>
+      <button class="stat"><div class="k">退回</div><div class="v red">2</div></button>
+      <button class="stat hot"><div class="k" style="color:#f87171">超时未接</div><div class="v red">3</div></button>
+    </div>
+  </section>
+
+  <!-- 订单列表 -->
+  <section>
+    <div class="sec-title">订单列表行</div>
+    <div class="sec-note">改动：<b>hover 淡绿底色</b>，让"可点开"更直观（其余不动，状态不靠左边色条）</div>
+    <div class="orders">
+      <div class="order">
+        <div class="order-head">
+          <div style="display:flex;gap:12px;align-items:center">
+            <span class="order-no">MY-260805-001</span>
+            <span style="font-size:12.5px;color:#44403c">全瓷冠 / 基台上部冠 · 2 颗</span>
+            <span class="urgent">加急</span>
+          </div>
+          <span class="pill pill-blue">设计中</span>
+        </div>
+        <div class="order-meta">
+          <span>牙位 <b>右上1 · 左上1</b></span>
+          <span>患者 <b>毕小香</b></span>
+          <span>设计师 <b>李师傅</b></span>
+          <span style="color:#a8a29e;font-size:12.5px">提交于 8月5日 10:20</span>
+        </div>
+        <div class="tl">
+          <div class="tl-step"><div class="tl-node"><span class="tl-dot done"></span><span class="tl-label done">提交订单</span><span class="tl-time">8/5 10:20</span></div></div>
+          <div class="tl-line done"></div>
+          <div class="tl-step"><div class="tl-node"><span class="tl-dot done"></span><span class="tl-label done">设计师接单</span><span class="tl-time">8/5 10:26</span></div></div>
+          <div class="tl-line todo"></div>
+          <div class="tl-step"><div class="tl-node"><span class="tl-dot todo"></span><span class="tl-label">设计完成</span></div></div>
+        </div>
+      </div>
+      <div class="order">
+        <div class="order-head">
+          <div style="display:flex;gap:12px;align-items:center">
+            <span class="order-no">MY-260805-002</span>
+            <span style="font-size:12.5px;color:#44403c">马龙桥设计 · 上颌</span>
+          </div>
+          <span class="pill pill-amber">待接单</span>
+        </div>
+        <div class="order-meta">
+          <span>范围 <b>上颌 半口</b></span>
+          <span>患者 <b>王建国</b></span>
+          <span style="color:#a8a29e;font-size:12.5px">提交于 8月5日 14:02</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 表格 -->
+  <section>
+    <div class="sec-title">管理端表格</div>
+    <div class="sec-note">改动：<b>偶数行暖石淡底 + hover 行底色</b>，分隔线更淡</div>
+    <table>
+      <thead><tr><th>单号</th><th>来源</th><th>类型</th><th>设计师</th><th style="text-align:right">积分</th><th>状态</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">MY-260805-001</td><td>明州口腔医院</td><td>全瓷冠</td><td>李师傅</td><td class="mono" style="text-align:right">10</td><td><span class="pill pill-blue">设计中</span></td></tr>
+        <tr><td class="mono">MY-260805-002</td><td>恒美义齿加工厂</td><td>马龙桥</td><td>—</td><td class="mono" style="text-align:right">80</td><td><span class="pill pill-amber">待接单</span></td></tr>
+        <tr><td class="mono">MY-260804-007</td><td>雅禾口腔门诊部</td><td>即刻设计</td><td>赵师傅</td><td class="mono" style="text-align:right">8</td><td><span class="pill pill-green">已完成</span></td></tr>
+        <tr><td class="mono">MY-260804-005</td><td>明州口腔医院</td><td>贴面(加急)</td><td>王师傅</td><td class="mono" style="text-align:right">60</td><td><span class="pill pill-red">返工中</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 表单 -->
+  <section>
+    <div class="sec-title">表单输入框</div>
+    <div class="sec-note">改动：<b>圆角 4px + 焦点环加粗到 3px</b>（点一下输入框看焦点效果）</div>
+    <div class="form">
+      <div class="field">
+        <label>患者姓名 / 编号（选填）</label>
+        <input type="text" placeholder="例如：毕小香 或 病历号">
+      </div>
+      <div class="field">
+        <label>设计要求 <span class="req">*</span></label>
+        <input type="text" placeholder="例如：右上后牙即刻负重，咬合略低开">
+      </div>
+    </div>
+  </section>
+
+  <!-- 上传区 -->
+  <section>
+    <div class="sec-title">文件上传区（已上线，保持不动）</div>
+    <div class="sec-note">扫描 = 蓝色系 / 照片 = 绿色系，文件带大小显示</div>
+    <div class="uploads">
+      <div>
+        <div class="up-title">上传扫描文件 *</div>
+        <div class="up-row">
+          <span class="chip chip-blue">右上后牙-扫描.stl（24.6 MB）×</span>
+          <button class="up-add blue">+ 选择扫描文件</button>
+        </div>
+      </div>
+      <div>
+        <div class="up-title">上传照片 *</div>
+        <div class="up-row">
+          <span class="chip chip-green">口内照-右上.jpg（3.2 MB）×</span>
+          <button class="up-add green">+ 照片</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 弹窗 -->
+  <section>
+    <div class="sec-title">确认弹窗</div>
+    <div class="sec-note">改动：<b>直角 → 8px 圆角 + 阴影升三级</b>（层级最高的提示）</div>
+    <div class="modal">
+      <h4>撤回订单 MY-260805-002？</h4>
+      <p>撤回后预扣的 80 积分将全额退回，订单立即从接单大厅消失。设计师接单后将无法撤回。</p>
+      <div class="btnrow">
+        <button class="btn btn-ghost">再想想</button>
+        <button class="btn btn-primary">确认撤回</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="footer-note">
+    木叶义齿设计平台 · UI 融合方案预览 ｜ 主色 #1e5c46 与暖纸背景 #fdfaf6 保持不变 ｜ 2026-08-06
+  </div>
+</div>
+
+<script>
+function setSkin(s) {
+  document.body.dataset.skin = s;
+  document.getElementById('btnOld').classList.toggle('on', s === 'old');
+  document.getElementById('btnNew').classList.toggle('on', s === 'new');
+}
+</script>
+</body>
+</html>

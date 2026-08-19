@@ -1,0 +1,17 @@
+{
+  "name": "muye-design-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "木叶义齿设计平台 —— 后端服务（骨架版，对接网站前端）",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

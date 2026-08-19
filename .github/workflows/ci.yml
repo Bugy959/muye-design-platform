@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend deps
+        working-directory: website
+        run: npm ci
+      - name: Type check + build
+        working-directory: website
+        run: npm run build
+      - name: Run core tests
+        working-directory: website
+        run: node --test
+      - name: Install backend deps
+        working-directory: server
+        run: npm ci
+      - name: Backend syntax check
+        working-directory: server
+        run: node --check src/index.js && node --check src/routes.js

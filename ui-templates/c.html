@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>模板 C · 浅色企业工作台</title>
+<style>
+  :root { --bg:#f2f4f8; --card:#ffffff; --ink:#1f2733; --sub:#6b7686; --dim:#9aa4b2;
+    --blue:#2563eb; --blue-soft:#e8effd; --green:#16a34a; --line:#e6eaf0; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:var(--bg); color:var(--ink); height:100vh; overflow:hidden;
+    font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; display:flex; flex-direction:column; }
+  .mono { font-family:ui-monospace,Consolas,Menlo,monospace; font-variant-numeric:tabular-nums; }
+
+  /* 顶部通栏 */
+  .topbar { background:var(--card); border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; padding:0 24px; height:60px; }
+  .topbar .l { display:flex; align-items:center; gap:10px; }
+  .topbar img { width:32px; height:32px; background:#f0f7f2; border-radius:8px; padding:2px; }
+  .topbar b { font-size:15.5px; }
+  .topbar .who { display:flex; align-items:center; gap:16px; font-size:13.5px; color:var(--sub); }
+  .avatar { width:30px; height:30px; border-radius:50%; background:var(--blue-soft); color:var(--blue); display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:600; }
+  .out { border:1px solid var(--line); background:#fff; color:var(--sub); border-radius:8px; padding:6px 14px; font-size:13px; cursor:pointer; }
+
+  .wrap { flex:1; display:flex; min-height:0; }
+  /* 侧边导航 */
+  .side { width:200px; padding:16px 12px; }
+  .side a { display:flex; align-items:center; gap:10px; padding:11px 14px; border-radius:10px; color:var(--sub); font-size:14.5px; text-decoration:none; margin-bottom:4px; }
+  .side a.on { background:var(--blue-soft); color:var(--blue); font-weight:600; }
+  .ico { width:18px; height:18px; border-radius:5px; background:currentColor; opacity:.28; }
+
+  .main { flex:1; padding:22px 26px; overflow:hidden; }
+  .pagehead { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+  .pagehead h1 { font-size:22px; font-weight:600; }
+  .pagehead .crumb { font-size:12.5px; color:var(--dim); margin-top:3px; }
+  .cta { background:var(--blue); color:#fff; border:none; border-radius:10px; padding:11px 22px; font-size:14.5px; font-weight:600; cursor:pointer; box-shadow:0 2px 8px rgba(37,99,235,.25); }
+
+  /* 统计卡 */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:18px; }
+  .stat { background:var(--card); border-radius:14px; padding:18px 20px; box-shadow:0 1px 3px rgba(31,39,51,.06); display:flex; align-items:center; gap:14px; }
+  .chip { width:44px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:19px; }
+  .c1 { background:#e7f6ec; } .c2 { background:var(--blue-soft); } .c3 { background:#fdf3e3; } .c4 { background:#fdeaea; }
+  .stat .k { font-size:12.5px; color:var(--sub); }
+  .stat .v { font-size:26px; font-weight:700; margin-top:2px; }
+  .stat .u { font-size:12px; color:var(--dim); font-weight:400; }
+
+  /* 表格卡 */
+  .card { background:var(--card); border-radius:14px; box-shadow:0 1px 3px rgba(31,39,51,.06); }
+  .card .ph { display:flex; justify-content:space-between; align-items:center; padding:16px 22px; border-bottom:1px solid var(--line); }
+  .card .ph b { font-size:15.5px; }
+  .card .ph .more { font-size:13px; color:var(--blue); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th { text-align:left; font-size:12.5px; color:var(--dim); font-weight:500; padding:11px 22px; background:#fafbfc; }
+  td { padding:13px 22px; border-top:1px solid var(--line); }
+  .no { color:var(--sub); font-size:13px; }
+  .pill { display:inline-block; font-size:12px; padding:3px 11px; border-radius:999px; font-weight:500; }
+  .p-pending { color:#b45309; background:#fef3e2; }
+  .p-doing { color:var(--blue); background:var(--blue-soft); }
+  .p-done { color:var(--green); background:#e7f6ec; }
+  .p-ret { color:#dc2626; background:#fdeaea; }
+  .urgent { background:#dc2626; color:#fff; font-size:11px; font-weight:600; border-radius:5px; padding:2px 7px; margin-left:8px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="l"><img src="logo-icon.png" alt="木叶"><b>木叶义齿设计平台</b></div>
+    <div class="who"><span class="avatar">明</span><span>明州口腔 · mingzhou</span><button class="out">退出登录</button></div>
+  </div>
+  <div class="wrap">
+    <nav class="side">
+      <a class="on" href="#"><span class="ico"></span>工作台</a>
+      <a href="#"><span class="ico"></span>提交新订单</a>
+      <a href="#"><span class="ico"></span>我的订单</a>
+      <a href="#"><span class="ico"></span>积分明细</a>
+      <a href="#"><span class="ico"></span>消息提醒</a>
+    </nav>
+    <div class="main">
+      <div class="pagehead">
+        <div><h1>工作台</h1><div class="crumb">首页 / 工作台 · 数据每日自动汇总</div></div>
+        <button class="cta">+ 提交新订单</button>
+      </div>
+      <div class="stats">
+        <div class="stat"><span class="chip c1">🍃</span><div><div class="k">积分余额</div><div class="v mono">361 <span class="u">分</span></div></div></div>
+        <div class="stat"><span class="chip c2">📋</span><div><div class="k">本月订单</div><div class="v mono">12 <span class="u">单</span></div></div></div>
+        <div class="stat"><span class="chip c3">⏳</span><div><div class="k">进行中</div><div class="v mono">3 <span class="u">单</span></div></div></div>
+        <div class="stat"><span class="chip c4">⚠️</span><div><div class="k">待处理</div><div class="v mono">1 <span class="u">单</span></div></div></div>
+      </div>
+      <div class="card">
+        <div class="ph"><b>最近订单</b><span class="more">查看全部 ›</span></div>
+        <table>
+          <tr><th>单号</th><th>设计类型</th><th>牙位 / 范围</th><th>状态</th><th>提交时间</th></tr>
+          <tr><td class="no mono">MY-20260730-008</td><td>马龙桥设计</td><td>全口 · 1 件</td><td><span class="pill p-pending">待接单</span></td><td class="mono" style="color:var(--dim)">07-30 18:32</td></tr>
+          <tr><td class="no mono">MY-20260729-007</td><td>全瓷冠 / 基台上部冠</td><td>上左3 · 上左4</td><td><span class="pill p-doing">设计中</span></td><td class="mono" style="color:var(--dim)">07-29 14:05</td></tr>
+          <tr><td class="no mono">MY-20260728-006</td><td>贴面 / 嵌体设计<span class="urgent">加急件</span></td><td>下右6</td><td><span class="pill p-done">已完成</span></td><td class="mono" style="color:var(--dim)">07-28 09:41</td></tr>
+          <tr><td class="no mono">MY-20260727-005</td><td>即刻设计</td><td>上右1 · 上右2</td><td><span class="pill p-ret">已退回</span></td><td class="mono" style="color:var(--dim)">07-27 16:20</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>木叶义齿设计平台 · UI升级预览</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#f0ede6;font:14px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",sans-serif;color:#2c2c2c;padding:24px}
+h1{text-align:center;font-size:24px;margin-bottom:8px;color:#1e5c46}
+h1+p{text-align:center;color:#888;margin-bottom:32px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;max-width:1400px;margin:0 auto}
+.col{background:#fff;border-radius:12px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.col h2{font-size:18px;margin-bottom:4px}
+.col .sub{font-size:12px;color:#999;margin-bottom:20px}
+.section{margin-bottom:20px}
+.section h3{font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:#aaa;margin-bottom:10px;padding-bottom:6px;border-bottom:1px solid #eee}
+
+/* 方案A 样式 */
+.a-colors{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.a-swatch{width:40px;height:40px;border-radius:50%;border:1px solid rgba(0,0,0,.1)}
+.a-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;border-radius:20px;font-size:14px;font-weight:600;border:none;cursor:default;transition:all .2s}
+.a-btn-primary{background:#15803D;color:#fff}
+.a-btn-ghost{background:#fff;color:#15803D;border:1.5px solid #15803D}
+.a-card{background:#fff;border:1px solid #E2EFE7;border-radius:16px;padding:16px;box-shadow:0 4px 16px rgba(21,128,61,.08)}
+.a-card .title{font-size:15px;font-weight:600;color:#15803D;margin-bottom:4px}
+.a-card .meta{font-size:12px;color:#888}
+.a-tag{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:500}
+.a-tag-green{background:#F0FDF4;color:#15803D}
+.a-tag-amber{background:#FFF7ED;color:#D97706}
+.a-nav{display:flex;gap:0;border-bottom:2px solid #E2EFE7}
+.a-nav-item{padding:8px 16px;font-size:13px;color:#888;cursor:default;border-bottom:2px solid transparent;margin-bottom:-2px}
+.a-nav-item.active{color:#15803D;border-bottom-color:#15803D;font-weight:600}
+.a-table{width:100%;border-collapse:collapse;font-size:13px}
+.a-table th{text-align:left;padding:8px 12px;color:#888;font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid #E2EFE7}
+.a-table td{padding:8px 12px;border-bottom:1px solid #E2EFE7}
+.a-table tr:nth-child(even){background:#F0FDF4}
+
+/* 方案B 样式 */
+.b-colors{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.b-swatch{width:40px;height:40px;border-radius:4px;border:1px solid rgba(0,0,0,.1)}
+.b-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 20px;font-size:14px;font-weight:600;border:none;cursor:default;transition:all .2s;font-family:Figtree,sans-serif}
+.b-btn-primary{background:#0891B2;color:#fff;border-radius:6px}
+.b-btn-ghost{background:#fff;color:#0891B2;border:2px solid #0891B2;border-radius:6px}
+.b-card{background:#fff;border:1px solid #A5F3FC;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.b-card .title{font-family:Figtree,sans-serif;font-size:15px;font-weight:600;color:#164E63;margin-bottom:4px}
+.b-card .meta{font-size:12px;color:#888}
+.b-tag{display:inline-flex;align-items:center;gap:4px;padding:4px 12px;font-size:12px;font-weight:600;font-family:Figtree,sans-serif;letter-spacing:.02em}
+.b-tag-green{background:#059669;color:#fff}
+.b-tag-amber{background:#0891B2;color:#fff}
+.b-nav{display:flex;gap:4px}
+.b-nav-item{padding:6px 14px;font-size:13px;font-family:Figtree,sans-serif;font-weight:500;color:#64748B;cursor:default;border-radius:4px}
+.b-nav-item.active{background:#0891B2;color:#fff}
+.b-table{width:100%;border-collapse:collapse;font-size:13px}
+.b-table th{text-align:left;padding:10px 12px;color:#64748B;font-weight:600;font-size:11px;font-family:Figtree,sans-serif;text-transform:uppercase;letter-spacing:.08em;border-bottom:2px solid #A5F3FC;background:#ECFEFF}
+.b-table td{padding:10px 12px;border-bottom:1px solid #E8F1F6}
+
+/* 方案C 样式 */
+.c-colors{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.c-swatch{width:40px;height:40px;border-radius:2px;border:1px solid rgba(0,0,0,.1)}
+.c-btn{display:inline-flex;align-items:center;gap:6px;padding:12px 24px;font-size:14px;font-weight:600;border:none;cursor:default;transition:all .2s;letter-spacing:.04em}
+.c-btn-primary{background:#18181B;color:#fff}
+.c-btn-ghost{background:transparent;color:#18181B;border-bottom:2px solid #18181B;padding:12px 0}
+.c-card{background:#FAFAFA;border-left:3px solid #18181B;padding:16px}
+.c-card .title{font-family:'Times New Roman',serif;font-size:16px;font-weight:700;color:#18181B;margin-bottom:4px}
+.c-card .meta{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.06em}
+.c-tag{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+.c-tag-green{background:#18181B;color:#FAFAFA}
+.c-tag-amber{border-bottom:2px solid #18181B;color:#18181B;background:transparent}
+.c-nav{display:flex;gap:32px}
+.c-nav-item{font-size:13px;font-weight:500;color:#888;cursor:default;letter-spacing:.04em;position:relative}
+.c-nav-item.active{color:#18181B;font-weight:700}
+.c-nav-item.active::after{content:'';position:absolute;bottom:-4px;left:0;width:100%;height:1px;background:#18181B}
+.c-table{width:100%;border-collapse:collapse;font-size:13px}
+.c-table th{text-align:left;padding:12px 12px;color:#888;font-weight:500;font-size:10px;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid #E4E4E7}
+.c-table td{padding:12px 12px;border-bottom:1px solid #E4E4E7}
+.c-table tr td:first-child{font-family:'Times New Roman',serif;font-size:14px;font-weight:600}
+</style>
+</head>
+<body>
+
+<h1>木叶义齿设计平台 · UI 升级预览</h1>
+<p>三套方案并排对比 — 配色 / 按钮 / 卡片 / 标签 / 导航 / 表格</p>
+
+<div class="grid">
+
+<!-- ===== 方案A · 自然质感 ===== -->
+<div class="col">
+  <h2>🌿 方案A · 自然质感</h2>
+  <p class="sub">翠绿+琥珀 · 大圆角 · 有机阴影 · 流动感</p>
+
+  <div class="section">
+    <h3>配色</h3>
+    <div class="a-colors">
+      <div class="a-swatch" style="background:#15803D" title="#15803D 主色"></div>
+      <div class="a-swatch" style="background:#059669" title="#059669 辅色"></div>
+      <div class="a-swatch" style="background:#D97706" title="#D97706 强调"></div>
+      <div class="a-swatch" style="background:#F0FDF4" title="#F0FDF4 背景"></div>
+      <div class="a-swatch" style="background:#E2EFE7" title="#E2EFE7 边框"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>按钮</h3>
+    <button class="a-btn a-btn-primary">提交订单 · 3 颗</button>
+    <button class="a-btn a-btn-ghost" style="margin-left:8px">取消</button>
+  </div>
+
+  <div class="section">
+    <h3>订单卡片</h3>
+    <div class="a-card">
+      <div class="title">MY-260805-001 · 即刻设计</div>
+      <div class="meta">右上 16、17 · 16 分 · 待接单</div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <span class="a-tag a-tag-green">✓ 待接单</span>
+        <span class="a-tag a-tag-amber">⚡ 加急件</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>导航</h3>
+    <div class="a-nav">
+      <div class="a-nav-item active">设计师设计</div>
+      <div class="a-nav-item">AI 设计</div>
+      <div class="a-nav-item">用户服务</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>表格</h3>
+    <table class="a-table">
+      <tr><th>单号</th><th>类型</th><th>牙位</th><th>状态</th></tr>
+      <tr><td>MY-01</td><td>即刻</td><td>16,17</td><td>待接单</td></tr>
+      <tr><td>MY-02</td><td>全瓷冠</td><td>11,21</td><td>设计中</td></tr>
+      <tr><td>MY-03</td><td>马龙桥</td><td>上颌</td><td>已完成</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 方案B · 专业医疗 ===== -->
+<div class="col">
+  <h2>🏥 方案B · 专业医疗</h2>
+  <p class="sub">医用青蓝 · 无衬线 · 清晰焦点 · WCAG AAA</p>
+
+  <div class="section">
+    <h3>配色</h3>
+    <div class="b-colors">
+      <div class="b-swatch" style="background:#0891B2" title="#0891B2 主色"></div>
+      <div class="b-swatch" style="background:#059669" title="#059669 强调"></div>
+      <div class="b-swatch" style="background:#22D3EE" title="#22D3EE 辅色"></div>
+      <div class="b-swatch" style="background:#ECFEFF" title="#ECFEFF 背景"></div>
+      <div class="b-swatch" style="background:#A5F3FC" title="#A5F3FC 边框"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>按钮</h3>
+    <button class="b-btn b-btn-primary">提交订单 · 3 颗</button>
+    <button class="b-btn b-btn-ghost" style="margin-left:8px">取消</button>
+  </div>
+
+  <div class="section">
+    <h3>订单卡片</h3>
+    <div class="b-card">
+      <div class="title">MY-260805-001 · 即刻设计</div>
+      <div class="meta">右上 16、17 · 16 分 · 待接单</div>
+      <div style="margin-top:8px;display:flex;gap:6px">
+        <span class="b-tag b-tag-green">待接单</span>
+        <span class="b-tag b-tag-amber">加急件</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>导航</h3>
+    <div class="b-nav">
+      <div class="b-nav-item active">设计师设计</div>
+      <div class="b-nav-item">AI 设计</div>
+      <div class="b-nav-item">用户服务</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>表格</h3>
+    <table class="b-table">
+      <tr><th>单号</th><th>类型</th><th>牙位</th><th>状态</th></tr>
+      <tr><td>MY-01</td><td>即刻</td><td>16,17</td><td>待接单</td></tr>
+      <tr><td>MY-02</td><td>全瓷冠</td><td>11,21</td><td>设计中</td></tr>
+      <tr><td>MY-03</td><td>马龙桥</td><td>上颌</td><td>已完成</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ===== 方案C · 纸本质感 ===== -->
+<div class="col">
+  <h2>📰 方案C · 纸本质感</h2>
+  <p class="sub">编辑黑+白 · 衬线标题 · 大间距 · 印刷品质</p>
+
+  <div class="section">
+    <h3>配色</h3>
+    <div class="c-colors">
+      <div class="c-swatch" style="background:#18181B" title="#18181B 主色"></div>
+      <div class="c-swatch" style="background:#3F3F46" title="#3F3F46 辅色"></div>
+      <div class="c-swatch" style="background:#FAFAFA" title="#FAFAFA 背景"></div>
+      <div class="c-swatch" style="background:#E4E4E7" title="#E4E4E7 边框"></div>
+      <div class="c-swatch" style="background:#EC4899" title="#EC4899 强调"></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>按钮</h3>
+    <button class="c-btn c-btn-primary">提交订单 · 3 颗</button>
+    <button class="c-btn c-btn-ghost" style="margin-left:16px">取消</button>
+  </div>
+
+  <div class="section">
+    <h3>订单卡片</h3>
+    <div class="c-card">
+      <div class="title">MY-260805-001 · 即刻设计</div>
+      <div class="meta">右上 16、17 · 16 分 · 待接单</div>
+      <div style="margin-top:8px;display:flex;gap:8px">
+        <span class="c-tag c-tag-green">待接单</span>
+        <span class="c-tag c-tag-amber">加急件</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>导航</h3>
+    <div class="c-nav">
+      <div class="c-nav-item active">设计师设计</div>
+      <div class="c-nav-item">AI 设计</div>
+      <div class="c-nav-item">用户服务</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>表格</h3>
+    <table class="c-table">
+      <tr><th>单号</th><th>类型</th><th>牙位</th><th>状态</th></tr>
+      <tr><td>MY-01</td><td>即刻</td><td>16,17</td><td>待接单</td></tr>
+      <tr><td>MY-02</td><td>全瓷冠</td><td>11,21</td><td>设计中</td></tr>
+      <tr><td>MY-03</td><td>马龙桥</td><td>上颌</td><td>已完成</td></tr>
+    </table>
+  </div>
+</div>
+
+</div>
+</body>
+</html>
