@@ -17,15 +17,24 @@ jobs:
       - name: Install frontend deps
         working-directory: website
         run: npm ci
+      - name: Lint
+        working-directory: website
+        run: npm run lint
       - name: Type check + build
         working-directory: website
         run: npm run build
       - name: Run core tests
         working-directory: website
         run: node --test
+      - name: Coverage gate (line >= 90%)
+        working-directory: website
+        run: npm run test:coverage
       - name: Install backend deps
         working-directory: server
         run: npm ci
       - name: Backend syntax check
         working-directory: server
         run: node --check src/index.js && node --check src/routes.js
+      - name: Run backend tests
+        working-directory: server
+        run: npm test

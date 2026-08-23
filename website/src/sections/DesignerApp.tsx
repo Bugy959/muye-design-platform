@@ -1,19 +1,20 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Designer, Order, OrderFile } from '@/types'
-import { acceptOrder, designerAlias, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
+import { acceptOrderAsync, designerAlias, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
+import { toast } from 'sonner'
 import { ToothChartMini } from '@/components/ToothChart'
 import { EmptyState, FileChip, ImageThumb, SectionHead, StatusPill, btnGhost, btnPrimary, inputCls } from '@/components/bits'
 import { ARCH_LABELS, DESIGN_TYPES } from '@/types'
 import { cn } from '@/lib/utils'
 
 /** 一键下载订单的全部扫描文件与照片（仅演示版已保存内容的文件可下） */
-function downloadAll(files: { name: string; dataUrl?: string }[], images: { name: string; dataUrl?: string }[]) {
-  const items = [...files, ...images].filter((f) => f.dataUrl)
+function downloadAll(files: { name: string; dataUrl?: string; url?: string }[], images: { name: string; dataUrl?: string; url?: string }[]) {
+  const items = [...files, ...images].filter((f) => f.dataUrl || f.url)
   items.forEach((f, i) =>
     setTimeout(() => {
       const a = document.createElement('a')
-      a.href = f.dataUrl!
-      a.download = f.name
+      if (f.url) { a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer' }
+      else if (f.dataUrl) { a.href = f.dataUrl; a.download = f.name }
       a.click()
     }, i * 150),
   )
@@ -33,14 +34,14 @@ export function DesignerApp({ designer }: { designer: Designer }) {
 
   const pool = useMemo(
     () => filterPoolOrders(db, designer.id),
-    [db.orders, designer.id],
+    [db, designer.id],
   )
   const mine = useMemo(
     () => db.orders.filter((o) => o.designerId === designer.id && (o.status === 'designing' || o.status === 'completed' || o.status === 'rework')),
-    [db.orders, designer.id],
+    [db, designer.id],
   )
   const doing = mine.filter((o) => o.status === 'designing' || o.status === 'rework')
-  const myStats = useMemo(() => orderStats(db, 'designer', designer.id), [db.orders, designer.id])
+  const myStats = useMemo(() => orderStats(db, 'designer', designer.id), [db, designer.id])
 
   return (
     <div className="mx-auto max-w-5xl px-5 pb-20 pt-8">
@@ -164,12 +165,17 @@ function PoolCard({ order: o, designerId, onAccepted }: { order: Order; designer
   const dp = getDesignParam(db, o.clientId)
   const [accepting, setAccepting] = useState(false)
   const [open, setOpen] = useState(false)
-  const grab = (e: React.MouseEvent) => {
+  const grab = async (e: React.MouseEvent) => {
     e.stopPropagation()
     if (accepting) return
     setAccepting(true)
-    if (acceptOrder(o.id, designerId)) onAccepted()
-    setTimeout(() => setAccepting(false), 500)
+    try {
+      const r = await acceptOrderAsync(o.id, designerId)
+      if (r.ok) onAccepted()
+      else if (r.error) toast.error(r.error)
+    } finally {
+      setAccepting(false)
+    }
   }
   return (
     <li className={cn('rounded-md border bg-white transition-colors duration-150', o.isRework ? 'border-red-300' : 'border-stone-300')}>
@@ -261,8 +267,8 @@ function PoolCard({ order: o, designerId, onAccepted }: { order: Order; designer
             <button
               type="button"
               className="rounded-full border border-brand px-3.5 py-1 text-[12.5px] font-medium text-brand transition-colors hover:bg-brand hover:text-stone-50 disabled:pointer-events-none disabled:opacity-40"
-              disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl)}
-              title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
+              disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url)}
+              title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
               onClick={(e) => { e.stopPropagation(); downloadAll(o.scanFiles, o.images) }}
             >
               ↓ 全部下载（文件 {o.scanFiles.length} + 照片 {o.images.length}）
@@ -369,8 +375,8 @@ function MineRow({ order: o }: { order: Order }) {
               <button
                 type="button"
                 className="rounded-full border border-brand px-3 py-0.5 text-[12px] font-medium text-brand transition-colors hover:bg-brand hover:text-stone-50 disabled:pointer-events-none disabled:opacity-40"
-                disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl)}
-                title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
+                disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url)}
+                title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
                 onClick={() => downloadAll(o.scanFiles, o.images)}
               >
                 ↓ 全部下载（文件 {o.scanFiles.length} + 照片 {o.images.length}）

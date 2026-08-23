@@ -7,6 +7,7 @@ import {
   rowToAssignment, rowToTxn, rowToNotice, rowToRework, rowToAccount, rowToParam,
 } from './db.js'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } from './auth.js'
+import { ossConfigured, getDownloadUrl, getUploadTarget } from './files.js'
 
 export const routes = Router()
 
@@ -46,7 +47,7 @@ function matchedClientGroupIds(designerGroupId) {
 /** 该订单对该设计师是否可见（可抢） */
 function orderVisibleToDesigner(order, designer) {
   if (!designer?.group_id) return false
-  const client = getClient(order.client_id)
+  const client = getClient(order.clientId ?? order.client_id)
   if (!client?.client_group_id) return false
   return matchedClientGroupIds(designer.group_id).includes(client.client_group_id)
 }
@@ -80,6 +81,12 @@ const h = (fn) => (req, res) => {
   }
 }
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg })
+/** 订单文件 key → 签名下载地址（未配置 OSS 时原样返回，保持旧行为） */
+function maybeSignOrder(o) {
+  if (!ossConfigured()) return o
+  const sign = (list) => (list || []).map((f) => (f.key ? { ...f, url: getDownloadUrl(f.key) } : f))
+  return { ...o, scanFiles: sign(o.scanFiles), images: sign(o.images), designFiles: sign(o.designFiles) }
+}
 
 /* ==================== 登录 ==================== */
 
@@ -100,7 +107,7 @@ routes.post('/auth/logout', requireAuth, h((req, res) => {
 
 routes.get('/bootstrap', requireAuth, h((req, res) => {
   const s = req.session
-  const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder)
+  const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder).map(maybeSignOrder)
   const reworks = db.prepare('SELECT * FROM rework_requests ORDER BY created_at DESC').all().map(rowToRework)
   const txns = db.prepare('SELECT * FROM point_txns ORDER BY created_at DESC').all().map(rowToTxn)
   const notices = db.prepare('SELECT * FROM notices ORDER BY created_at DESC').all().map(rowToNotice)
@@ -357,6 +364,12 @@ routes.post('/notices/read-all', requireAuth, requireRole('client'), h((req, res
   res.json({ ok: true })
 }))
 
+/** 对应 markNoticeRead：单条消息标记已读（仅限本人的消息） */
+routes.post('/notices/:id/read', requireAuth, requireRole('client'), h((req, res) => {
+  db.prepare('UPDATE notices SET is_read = 1 WHERE id = ? AND client_id = ?').run(req.params.id, req.session.clientId)
+  res.json({ ok: true })
+}))
+
 /* ==================== 管理端 ==================== */
 
 /** 对应 adjustPoints：管理端充值/扣减积分（微信转账后手动加积分） */
@@ -445,8 +458,13 @@ routes.patch('/admin/groups/:id', requireAuth, requireRole('admin'), h((req, res
 }))
 
 routes.post('/admin/designers/:id/group', requireAuth, requireRole('admin'), h((req, res) => {
-  const r = db.prepare('UPDATE designers SET group_id = ? WHERE id = ?').run(req.body?.groupId ?? null, req.params.id)
-  if (r.changes === 0) return bad(res, '设计师不存在', 404)
+  const target = getDesigner(req.params.id)
+  if (!target) return bad(res, '设计师不存在', 404)
+  tx(() => {
+    db.prepare('UPDATE designers SET group_id = ? WHERE id = ?').run(req.body?.groupId ?? null, target.id)
+    // 与演示版 moveDesigner 对齐：调离原组时自动解除其在其他组的组长身份
+    db.prepare('UPDATE groups SET leader_id = NULL WHERE leader_id = ? AND id IS NOT ?').run(target.id, req.body?.groupId ?? null)
+  })
   res.json({ ok: true })
 }))
 
@@ -518,4 +536,13 @@ routes.post('/admin/orders/:id/dispatch', requireAuth, requireRole('admin'), h((
   }
   db.prepare(`UPDATE orders SET status = 'pending' WHERE id = ?`).run(order.id)
   res.json({ ok: true })
+}))
+
+/* ---- 大文件上传（OSS 直传，见《服务器部署详细指南.md》第 12 章） ---- */
+
+routes.post('/files/upload-token', requireAuth, h((req, res) => {
+  const { name, size } = req.body || {}
+  if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
+  const { key, uploadUrl } = getUploadTarget(name, size)
+  res.json({ key, uploadUrl })
 }))

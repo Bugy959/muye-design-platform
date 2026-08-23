@@ -17,22 +17,31 @@ if errorlevel 1 (
   exit /b 1
 )
 
-rem --- free port 3000 if a leftover server is still holding it ---
+rem --- free ports 3000/3001 if leftover servers are still holding them ---
 for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3000 " ^| findstr "LISTENING"') do (
   echo Port 3000 is occupied by PID %%p, stopping it...
+  taskkill /PID %%p /F >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":3001 " ^| findstr "LISTENING"') do (
+  echo Port 3001 is occupied by PID %%p, stopping it...
   taskkill /PID %%p /F >nul 2>&1
 )
 
 echo.
 echo =========================================
 echo   Muye Dental Design Platform
-echo   http://localhost:3000
-echo   Press Ctrl+C to stop the server
+echo   Frontend : http://localhost:3000
+echo   Backend  : http://localhost:3001
+echo   Press Ctrl+C to stop the frontend
+echo   (backend runs in its own minimized window)
 echo =========================================
 echo.
 
-rem --- open the browser after the server has time to start ---
-start "" /min cmd /c "timeout /t 5 /nobreak >nul & start http://localhost:3000"
+rem --- start the backend API first (frontend now depends on it) ---
+start "Muye Backend (3001)" /min cmd /c "cd /d %~dp0server && npm start"
+
+rem --- open the browser after the servers have time to start ---
+start "" /min cmd /c "timeout /t 6 /nobreak >nul & start http://localhost:3000"
 
 call npm run dev
 echo.

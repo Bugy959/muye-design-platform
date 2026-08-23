@@ -1,6 +1,13 @@
 import { useSyncExternalStore } from 'react'
-import type { Account, Arch, Client, ClientGroup, DB, DesignParam, DesignType, Designer, Group, GroupAssignment, Notice, Order, OrderFile, OrderImage, PointTxn, ReworkRequest, ToothCode } from '../types/index.ts'
+import type { Account, Arch, Client, ClientGroup, DB, DesignParam, DesignType, Designer, Group, GroupAssignment, Notice, Order, OrderFile, OrderImage, PointTxn, ReworkRequest, Session, ToothCode } from '../types/index.ts'
 import { ARCH_LABELS, DESIGN_TYPES, MALONG_POINTS, URGENT_POINTS_PER_TOOTH, toothSort } from '../types/index.ts'
+import {
+  apiAcceptOrder, apiAddAssignment, apiAdjustPoints, apiApproveRework, apiBootstrap, apiCancelOrder, apiCancelRework,
+  apiCreateAccount, apiCreateClientGroup, apiCreateDesignerGroup, apiCreateOrder, apiCreateRework, apiDeleteAccount,
+  apiDeleteClientGroup, apiDispatchOrder, apiMarkAllNoticesRead, apiMarkNoticeRead, apiMoveClient, apiMoveDesigner,
+  apiRejectRework, apiRemoveAssignment, apiResetPassword, apiResubmitOrder, apiReturnOrder, apiSaveDesignParam,
+  apiGetUploadToken, apiSubmitDesign, apiUpdateClientGroup, apiUpdateGroup, apiUpdateRework, apiUploadFile, isBackendMode,
+} from './api.ts'
 
 const KEY = 'muye-design-platform-v5'
 const SESSION_KEY = 'muye-session-v1'
@@ -160,6 +167,84 @@ export function useDB(): DB {
 
 export function resetDB() { commit(seed()) }
 
+/* ---------------- 后端同步层（P0） ----------------
+   演示模式：纯 localStorage（Node 测试、localStorage `muye-data-mode=demo`）。
+   后端模式（浏览器默认）：变更先本地 commit 做乐观更新，再把操作发给后端，
+   最后用 /bootstrap 的服务端数据整体覆盖本地，保证以服务端为准。 */
+
+export type { Session }
+
+function tokenOf(): string | undefined {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY)
+    if (!raw) return undefined
+    return (JSON.parse(raw) as Session).token
+  } catch {
+    return undefined
+  }
+}
+
+/** 服务端按角色裁剪数据 → 本地 DB 形状：缺失的表补空，seq 保留本地值（仅演示模式开单用） */
+function normalizeRemote(remote: Partial<DB>): DB {
+  return {
+    clients: [], designers: [], groups: [], clientGroups: [], assignments: [],
+    orders: [], reworks: [], designParams: [], txns: [], notices: [], accounts: [],
+    ...remote,
+    seq: db.seq,
+  }
+}
+
+let refreshing: Promise<boolean> | null = null
+let refreshQueued = false
+
+/** 拉取服务端全量数据覆盖本地；并发调用合并，刷新期间有新请求则补一轮 */
+export function refreshFromServer(): Promise<boolean> {
+  if (!isBackendMode()) return Promise.resolve(true)
+  const token = tokenOf()
+  if (!token) return Promise.resolve(false)
+  if (refreshing) {
+    refreshQueued = true
+    return refreshing
+  }
+  refreshing = (async () => {
+    let ok = true
+    try {
+      do {
+        refreshQueued = false
+        const remote = await apiBootstrap(token)
+        commit(normalizeRemote(remote))
+      } while (refreshQueued)
+    } catch (e) {
+      ok = false
+      console.warn('[muye] 后端数据刷新失败：', e)
+    } finally {
+      refreshing = null
+    }
+    return ok
+  })()
+  return refreshing
+}
+
+/** 登录后初始化后端数据；返回 false 表示后端不可达 */
+export function initBackend(): Promise<boolean> {
+  if (!isBackendMode()) return Promise.resolve(true)
+  if (!tokenOf()) return Promise.resolve(false)
+  return refreshFromServer()
+}
+
+/** 后端模式下把变更同步给后端；失败时回滚为服务端数据 */
+function sync(call: (token: string) => Promise<unknown>) {
+  if (!isBackendMode()) return
+  const token = tokenOf()
+  if (!token) return
+  call(token)
+    .then(() => refreshFromServer())
+    .catch((e) => {
+      console.warn('[muye] 操作同步失败，已回滚为服务端数据：', e)
+      void refreshFromServer()
+    })
+}
+
 /** 兼容旧版浏览器缓存数据：补齐后来新增的数据表，防止页面取 undefined.map 崩溃 */
 function ensureDBShape() {
   let changed = false
@@ -251,6 +336,7 @@ export function groupOf(dbv: DB, id?: string): Group | undefined {
 export function registerDesignerGroup(name: string, note?: string): Group {
   const g: Group = { id: `g-${uid()}`, name: name.trim(), note: note?.trim() || '' }
   commit({ ...db, groups: [...db.groups, g] })
+  sync((token) => apiCreateDesignerGroup(token, g.name, g.note))
   return g
 }
 
@@ -309,7 +395,7 @@ export function createOrder(input: {
     seq: db.seq + 1,
   })
   checkUnassigned(o)
-  return o
+  return db.orders.find((x) => x.id === o.id) ?? o
 }
 
 export function acceptOrder(orderId: string, designerId: string): boolean {
@@ -340,12 +426,13 @@ export function submitDesign(orderId: string, files: OrderFile[]) {
     orders: db.orders.map((o) => (o.id === orderId ? { ...o, designFiles: files, status: 'completed' as const, completedAt: now(), reworkCount: wasRework ? o.reworkCount + 1 : o.reworkCount } : o)),
     notices: [notice, ...db.notices],
   })
+  sync((token) => apiSubmitDesign(token, orderId, files))
 }
 
 /** 设计师退回：信息不全或数据有问题，退回给医院/加工厂 */
 export function returnOrder(orderId: string, reason: string) {
   const order = db.orders.find((o) => o.id === orderId)
-  if (!order) return
+  if (!order || !['pending', 'designing', 'rework'].includes(order.status)) return
   const notice: Notice = {
     id: `n-${uid()}`, clientId: order.clientId, orderId,
     text: `订单 ${order.no} 被设计师退回：${reason}。请修改后重新提交。`, read: false, createdAt: now(),
@@ -359,6 +446,7 @@ export function returnOrder(orderId: string, reason: string) {
     ),
     notices: [notice, ...db.notices],
   })
+  sync((token) => apiReturnOrder(token, orderId, reason))
 }
 
 /** 客户修改后重新提交被退回的订单：按新牙位/新颗数重算积分，多退少补 */
@@ -398,6 +486,7 @@ export function resubmitOrder(orderId: string, updates: { teeth?: ToothCode[]; c
   })
   const updated = db.orders.find((o) => o.id === orderId)
   if (updated) checkUnassigned(updated)
+  sync((token) => apiResubmitOrder(token, orderId, updates))
 }
 
 export function adjustPoints(clientId: string, delta: number, reason: string): boolean {
@@ -414,15 +503,18 @@ export function adjustPoints(clientId: string, delta: number, reason: string): b
     clients: db.clients.map((c) => (c.id === clientId ? { ...c, points: balance } : c)),
     txns: [txn, ...db.txns],
   })
+  sync((token) => apiAdjustPoints(token, clientId, delta, reason))
   return true
 }
 
 export function renameGroup(groupId: string, name: string) {
   commit({ ...db, groups: db.groups.map((g) => (g.id === groupId ? { ...g, name } : g)) })
+  sync((token) => apiUpdateGroup(token, groupId, { name }))
 }
 
 export function setGroupLeader(groupId: string, leaderId?: string) {
   commit({ ...db, groups: db.groups.map((g) => (g.id === groupId ? { ...g, leaderId } : g)) })
+  sync((token) => apiUpdateGroup(token, groupId, { leaderId: leaderId ?? null }))
 }
 
 export function moveDesigner(designerId: string, groupId: string) {
@@ -431,16 +523,19 @@ export function moveDesigner(designerId: string, groupId: string) {
     designers: db.designers.map((d) => (d.id === designerId ? { ...d, groupId } : d)),
     groups: db.groups.map((g) => (g.leaderId === designerId && g.id !== groupId ? { ...g, leaderId: undefined } : g)),
   })
+  sync((token) => apiMoveDesigner(token, designerId, groupId))
 }
 
 
 /** 单条消息标为已读 */
 export function markNoticeRead(noticeId: string) {
   commit({ ...db, notices: db.notices.map((n) => (n.id === noticeId ? { ...n, read: true } : n)) })
+  sync((token) => apiMarkNoticeRead(token, noticeId))
 }
 
 export function markNoticesRead(clientId: string) {
   commit({ ...db, notices: db.notices.map((n) => (n.clientId === clientId ? { ...n, read: true } : n)) })
+  sync((token) => apiMarkAllNoticesRead(token))
 }
 
 /* ---------------- 客户分组管理 ---------------- */
@@ -485,6 +580,7 @@ export function filterPoolOrders(dbv: DB, designerId: string): Order[] {
 export function createClientGroup(name: string, note?: string): ClientGroup {
   const cg: ClientGroup = { id: `cg-${uid()}`, name: name.trim(), note: note?.trim() || '', createdAt: now() }
   commit({ ...db, clientGroups: [...db.clientGroups, cg] })
+  sync((token) => apiCreateClientGroup(token, cg.name, cg.note))
   return cg
 }
 
@@ -496,6 +592,7 @@ export function renameClientGroup(groupId: string, name: string, note?: string) 
       cg.id === groupId ? { ...cg, name: name.trim(), note: note?.trim() ?? cg.note } : cg
     ),
   })
+  sync((token) => apiUpdateClientGroup(token, groupId, note === undefined ? { name: name.trim() } : { name: name.trim(), note: note.trim() }))
 }
 
 /** 删除客户分组（需无成员） */
@@ -507,6 +604,7 @@ export function deleteClientGroup(groupId: string): boolean {
     clientGroups: db.clientGroups.filter((cg) => cg.id !== groupId),
     assignments: db.assignments.filter((a) => a.clientGroupId !== groupId),
   })
+  sync((token) => apiDeleteClientGroup(token, groupId))
   return true
 }
 
@@ -516,11 +614,13 @@ export function moveClient(clientId: string, clientGroupId?: string) {
     ...db,
     clients: db.clients.map((c) => (c.id === clientId ? { ...c, clientGroupId } : c)),
   })
+  sync((token) => apiMoveClient(token, clientId, clientGroupId))
 }
 
 /** 更新设计师组备注 */
 export function updateGroupNote(groupId: string, note: string) {
   commit({ ...db, groups: db.groups.map((g) => (g.id === groupId ? { ...g, note: note.trim() } : g)) })
+  sync((token) => apiUpdateGroup(token, groupId, { note: note.trim() }))
 }
 
 /* ---------------- 分组匹配规则管理 ---------------- */
@@ -532,16 +632,20 @@ export function addAssignment(clientGroupId: string, designerGroupId: string) {
     id: `ga-${uid()}`, clientGroupId, designerGroupId, createdAt: now(),
   }
   commit({ ...db, assignments: [...db.assignments, ga] })
+  sync((token) => apiAddAssignment(token, clientGroupId, designerGroupId))
 }
 
 /** 移除匹配规则 */
 export function removeAssignment(clientGroupId: string, designerGroupId: string) {
+  // 先取出规则 id（服务端按 id 删除），再本地提交
+  const hit = db.assignments.find((a) => a.clientGroupId === clientGroupId && a.designerGroupId === designerGroupId)
   commit({
     ...db,
     assignments: db.assignments.filter(
       (a) => !(a.clientGroupId === clientGroupId && a.designerGroupId === designerGroupId)
     ),
   })
+  if (hit) sync((token) => apiRemoveAssignment(token, hit.id))
 }
 
 /** 管理端手动派发未分配订单：仅当客户组已匹配设计师组时重置为 pending 重新路由；否则返回 false 拦截 */
@@ -577,6 +681,7 @@ export function cancelOrder(orderId: string, clientId: string): boolean {
     clients: db.clients.map((c) => (c.id === client.id ? { ...c, points: balance } : c)),
     txns: [txn, ...db.txns],
   })
+  sync((token) => apiCancelOrder(token, orderId))
   return true
 }
 
@@ -607,6 +712,7 @@ export function saveDesignParam(clientId: string, innerCrown: number, occlusalCu
   } else {
     commit({ ...db, designParams: [...db.designParams, { id: clientId, innerCrown, occlusalCut, proximalCut }] })
   }
+  sync((token) => apiSaveDesignParam(token, clientId, innerCrown, occlusalCut, proximalCut))
 }
 
 /* ---------------- 返工审核流程 ---------------- */
@@ -620,6 +726,7 @@ export function createReworkRequest(orderId: string, reason: string, images: Ord
     orders: db.orders.map((o) => o.id === orderId ? { ...o, status: 'rework' as const, isRework: true, reworkReason: reason } : o),
     reworks: [{ id: `rw-${uid()}`, orderId, clientId: order.clientId, reason, images, status: 'pending', createdAt: now() }, ...db.reworks],
   })
+  sync((token) => apiCreateRework(token, orderId, reason, images))
 }
 
 /** 管理端审核通过：登记 + 退还该订单积分；订单保持在原设计师手上重做 */
@@ -648,6 +755,7 @@ export function approveRework(reworkId: string) {
     txns: [txn, ...db.txns],
     notices: [notice, ...db.notices],
   })
+  sync((token) => apiApproveRework(token, reworkId))
 }
 
 /** 管理端审核不通过：登记结果、不退积分；订单保持在原设计师手上重做 */
@@ -667,6 +775,7 @@ export function rejectRework(reworkId: string) {
     reworks: db.reworks.map((r) => r.id === reworkId ? { ...r, status: 'rejected' as const, reviewedAt: now() } : r),
     notices: notice ? [notice, ...db.notices] : db.notices,
   })
+  sync((token) => apiRejectRework(token, reworkId))
 }
 
 export function getClientReworks(dbv: DB, clientId: string): ReworkRequest[] {
@@ -682,6 +791,7 @@ export function cancelReworkRequest(reworkId: string): boolean {
     reworks: db.reworks.filter((r) => r.id !== reworkId),
     orders: db.orders.map((o) => o.id === rw.orderId ? { ...o, status: 'completed' as const, reworkReason: undefined, isRework: o.reworkCount > 0 } : o),
   })
+  sync((token) => apiCancelRework(token, reworkId))
   return true
 }
 
@@ -693,6 +803,7 @@ export function updateReworkRequest(reworkId: string, reason: string, images: Or
     ...db,
     reworks: db.reworks.map((r) => r.id === reworkId ? { ...r, reason: reason.trim(), images } : r),
   })
+  sync((token) => apiUpdateRework(token, reworkId, reason.trim(), images))
   return true
 }
 
@@ -729,12 +840,6 @@ export function orderStats(dbv: DB, role: 'client' | 'designer' | 'admin', id: s
 
 /* ---------------- 登录与账号管理 ---------------- */
 
-export interface Session {
-  role: 'client' | 'designer' | 'admin'
-  clientId?: string
-  designerId?: string
-  username: string
-}
 
 export function authenticate(username: string, password: string): Session | null {
   const acc = db.accounts.find((a) => a.username === username.trim() && a.password === password)
@@ -791,17 +896,96 @@ export function createAccount(input: {
 
 export function resetPassword(accountId: string, newPassword: string) {
   commit({ ...db, accounts: db.accounts.map((a) => (a.id === accountId ? { ...a, password: newPassword } : a)) })
+  sync((token) => apiResetPassword(token, accountId, newPassword))
 }
 
 export function deleteAccount(accountId: string) {
   commit({ ...db, accounts: db.accounts.filter((a) => a.id !== accountId || a.role === 'admin') })
+  sync((token) => apiDeleteAccount(token, accountId))
+}
+
+/* ---------------- 后端模式异步变体：需要服务端返回值的场景 ----------------
+   演示模式直接走本地逻辑；后端模式调 API 后用服务端数据刷新本地 */
+
+export async function createOrderAsync(input: Parameters<typeof createOrder>[0]): Promise<Order | null> {
+  if (!isBackendMode()) return createOrder(input)
+  const token = tokenOf()
+  if (!token) return null
+  const r = await apiCreateOrder(token, input)
+  await refreshFromServer()
+  return db.orders.find((o) => o.id === r.order.id) ?? r.order
+}
+
+/** 抢单：返回 ok 与服务端错误消息（如“手慢了，该订单已被其他设计师接走”），便于界面提示 */
+export async function acceptOrderAsync(orderId: string, designerId: string): Promise<{ ok: boolean; error?: string }> {
+  if (!isBackendMode()) return { ok: acceptOrder(orderId, designerId) }
+  const token = tokenOf()
+  if (!token) return { ok: false }
+  try {
+    await apiAcceptOrder(token, orderId)
+    await refreshFromServer()
+    return { ok: true }
+  } catch (e) {
+    await refreshFromServer()
+    return { ok: false, error: e instanceof Error ? e.message : '接单失败，请稍后重试' }
+  }
+}
+
+export async function dispatchUnassignedOrderAsync(orderId: string): Promise<boolean> {
+  if (!isBackendMode()) return dispatchUnassignedOrder(orderId)
+  const token = tokenOf()
+  if (!token) return false
+  try {
+    await apiDispatchOrder(token, orderId)
+    await refreshFromServer()
+    return true
+  } catch {
+    await refreshFromServer()
+    return false
+  }
+}
+
+export async function createClientGroupAsync(name: string, note?: string): Promise<ClientGroup> {
+  if (!isBackendMode()) return createClientGroup(name, note)
+  const token = tokenOf()
+  if (!token) throw new Error('未登录')
+  const r = await apiCreateClientGroup(token, name, note)
+  await refreshFromServer()
+  return db.clientGroups.find((g) => g.id === r.id) ?? { id: r.id, name: name.trim(), note: note?.trim() || '', createdAt: now() }
+}
+
+export async function registerDesignerGroupAsync(name: string, note?: string): Promise<Group> {
+  if (!isBackendMode()) return registerDesignerGroup(name, note)
+  const token = tokenOf()
+  if (!token) throw new Error('未登录')
+  const r = await apiCreateDesignerGroup(token, name, note)
+  await refreshFromServer()
+  return db.groups.find((g) => g.id === r.id) ?? { id: r.id, name: name.trim(), note: note?.trim() || '' }
+}
+
+export async function createAccountAsync(input: Parameters<typeof createAccount>[0]): Promise<void> {
+  if (!isBackendMode()) {
+    createAccount(input)
+    return
+  }
+  const token = tokenOf()
+  if (!token) throw new Error('未登录')
+  await apiCreateAccount(token, input)
+  await refreshFromServer()
 }
 
 /* ---------------- 文件读取：小文件内嵌 dataUrl 供下载，大文件仅记录文件名 ---------------- */
 
 const EMBED_LIMIT = 1500 * 1024 // 单文件约 1.5MB
 
-export function readOrderFile(file: File): Promise<OrderFile> {
+export async function readOrderFile(file: File): Promise<OrderFile> {
+  // 大文件在后端模式优先走 OSS 直传（真实内容不丢失）；OSS 未配置/失败时回退为仅记录文件名
+  if (file.size > EMBED_LIMIT && isBackendMode()) {
+    try {
+      const uploaded = await uploadOrderFile(file)
+      return { name: uploaded.name, key: uploaded.key, size: uploaded.size }
+    } catch { /* 回退：仅记录文件名，保持旧行为 */ }
+  }
   return new Promise((resolve) => {
     if (file.size > EMBED_LIMIT) {
       resolve({ name: file.name, size: file.size })
@@ -812,4 +996,16 @@ export function readOrderFile(file: File): Promise<OrderFile> {
     reader.onerror = () => resolve({ name: file.name, size: file.size })
     reader.readAsDataURL(file)
   })
+}
+
+/**
+ * 上传口扫/照片到 OSS，返回订单可保存的文件对象（大文件 key 模式）。
+ * 依赖后端已配置 OSS；未配置时后端会返回 400（本函数会抛错提示）。
+ */
+export async function uploadOrderFile(file: File): Promise<OrderFile> {
+  const token = tokenOf()
+  if (!token) throw new Error('未登录')
+  const { key, uploadUrl } = await apiGetUploadToken(token, file.name, file.size)
+  await apiUploadFile(uploadUrl, file)
+  return { name: file.name, key, size: file.size }
 }

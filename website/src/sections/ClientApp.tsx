@@ -1,10 +1,11 @@
 import { useMemo, useRef, useState } from 'react'
-import type { Arch, Client, DesignType, Order, OrderFile, OrderImage, ToothCode } from '@/types'
+import type { Arch, Client, DesignType, Order, OrderFile, OrderImage, ReworkRequest, ToothCode } from '@/types'
 import { ARCH_LABELS, DESIGN_TYPES, MALONG_POINTS, URGENT_POINTS_PER_TOOTH } from '@/types'
-import { cancelOrder, cancelReworkRequest, createOrder, createReworkRequest, designerAlias, getClientReworks, isFileTooLarge, markNoticeRead, markNoticesRead, orderCount, orderPoints, orderStats, readOrderFile, resubmitOrder, searchOrders, updateReworkRequest, useDB } from '@/lib/store'
+import { cancelOrder, cancelReworkRequest, createOrderAsync, createReworkRequest, designerAlias, getClientReworks, isFileTooLarge, markNoticeRead, orderCount, orderPoints, orderStats, readOrderFile, resubmitOrder, searchOrders, updateReworkRequest, useDB } from '@/lib/store'
 import { ToothChart, ToothChartMini } from '@/components/ToothChart'
-import { EmptyState, Field, FileChip, ImageThumb, OrderTimeline, SectionHead, SortBar, StatusPill, TeethInline, btnGhost, btnPrimary, fmtSize, inputCls, sortOrders } from '@/components/bits'
-import type { OrderSort } from '@/components/bits'
+import { EmptyState, Field, FileChip, ImageThumb, OrderTimeline, SectionHead, SortBar, StatusPill, TeethInline, btnGhost, btnPrimary, inputCls } from '@/components/bits'
+import { fmtSize, sortOrders } from '@/lib/order-utils'
+import type { OrderSort } from '@/lib/order-utils'
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog'
 import { cn } from '@/lib/utils'
 
@@ -16,11 +17,11 @@ const fmtTime = (iso: string) => {
 export function ClientApp({ client }: { client: Client }) {
   const db = useDB()
   const [tab, setTab] = useState<'design' | 'ai' | 'service' | 'points' | 'notices' | 'orders'>('design')
-  const myOrders = useMemo(() => db.orders.filter((o) => o.clientId === client.id), [db.orders, client.id])
-  const myNotices = useMemo(() => db.notices.filter((n) => n.clientId === client.id), [db.notices, client.id])
-  const myReworks = useMemo(() => getClientReworks(db, client.id), [db.reworks, client.id])
-  const myStats = useMemo(() => orderStats(db, 'client', client.id), [db.orders, client.id])
-  const myTxns = useMemo(() => db.txns.filter((t) => t.clientId === client.id), [db.txns, client.id])
+  const myOrders = useMemo(() => db.orders.filter((o) => o.clientId === client.id), [db, client.id])
+  const myNotices = useMemo(() => db.notices.filter((n) => n.clientId === client.id), [db, client.id])
+  const myReworks = useMemo(() => getClientReworks(db, client.id), [db, client.id])
+  const myStats = useMemo(() => orderStats(db, 'client', client.id), [db, client.id])
+  const myTxns = useMemo(() => db.txns.filter((t) => t.clientId === client.id), [db, client.id])
   const unread = myNotices.filter((n) => !n.read).length
 
   return (
@@ -204,7 +205,7 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
 
   const quantityText = isMalong ? ' 1 件' : useCustom && countNum > 0 ? ` ${countNum} 颗` : teeth.length > 0 ? ` ${teeth.length} 颗` : ''
 
-  const doSubmit = () => {
+  const doSubmit = async () => {
     if (submitting || !canSubmit) return
     setConfirmOpen(false)
     if (client.points < cost) {
@@ -212,20 +213,25 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
       return
     }
     setSubmitting(true)
-    const o = createOrder({
-      clientId: client.id, type, urgent: urgent && DESIGN_TYPES[type].urgentAllowed,
-      teeth, custom: useCustom, customCount: useCustom ? countNum : undefined,
-      arch: isMalong ? arch : undefined,
-      patient: patient.trim() || undefined,
-      requirement: requirement.trim(), scanFiles, images,
-    })
-    setSubmitting(false)
-    if (!o) {
-      setError('积分不足，请联系管理方充值')
-      return
+    try {
+      const o = await createOrderAsync({
+        clientId: client.id, type, urgent: urgent && DESIGN_TYPES[type].urgentAllowed,
+        teeth, custom: useCustom, customCount: useCustom ? countNum : undefined,
+        arch: isMalong ? arch : undefined,
+        patient: patient.trim() || undefined,
+        requirement: requirement.trim(), scanFiles, images,
+      })
+      if (!o) {
+        setError('积分不足，请联系管理方充值')
+        return
+      }
+      setDone(o.no)
+      setTeeth([]); setRequirement(''); setImages([]); setScanFiles([]); setUrgent(false); setCustom(false); setCustomCount(''); setPatient(''); setError('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '提交失败，请稍后重试')
+    } finally {
+      setSubmitting(false)
     }
-    setDone(o.no)
-    setTeeth([]); setRequirement(''); setImages([]); setScanFiles([]); setUrgent(false); setCustom(false); setCustomCount(''); setPatient(''); setError('')
   }
 
   if (done) {
@@ -586,8 +592,8 @@ function AIDesign() {
 
 /* ---------------- 用户服务（退回 + 返工） ---------------- */
 
-function UserService({ orders, reworks }: { orders: any[]; reworks: any[]; client?: any }) {
-  const returned = orders.filter((o: any) => o.status === 'returned')
+function UserService({ orders, reworks }: { orders: Order[]; reworks: ReworkRequest[]; client?: Client }) {
+  const returned = orders.filter((o) => o.status === 'returned')
   return (
     <section>
       <SectionHead index="02" title="用户服务" desc="退回订单与返工申请进度" />
@@ -596,7 +602,7 @@ function UserService({ orders, reworks }: { orders: any[]; reworks: any[]; clien
         <div className="mb-6">
           <h3 className="mb-3 font-mono text-[12px] uppercase tracking-[0.16em] text-stone-400">退回订单</h3>
           <ul className="divide-y divide-stone-300 border-y border-stone-300">
-            {returned.map((o: any) => (
+            {returned.map((o) => (
               <li key={o.id} className="py-3">
                 <span className="font-mono text-[14px] text-stone-500">{o.no}</span>
                 <p className="mt-1 text-[14px] text-red-600">{o.returnReason ?? '信息不全或数据有问题'}</p>
@@ -609,8 +615,8 @@ function UserService({ orders, reworks }: { orders: any[]; reworks: any[]; clien
         <div>
           <h3 className="mb-3 font-mono text-[12px] uppercase tracking-[0.16em] text-stone-400">返工申请</h3>
           <ul className="divide-y divide-stone-300 border-y border-stone-300">
-            {reworks.map((rw: any) => (
-              <ReworkRow key={rw.id} rw={rw} order={orders.find((x: any) => x.id === rw.orderId)} />
+            {reworks.map((rw) => (
+              <ReworkRow key={rw.id} rw={rw} order={orders.find((x) => x.id === rw.orderId)} />
             ))}
           </ul>
         </div>
@@ -621,10 +627,10 @@ function UserService({ orders, reworks }: { orders: any[]; reworks: any[]; clien
 
 /* ---------------- 返工申请行（审核前可修改/撤销） ---------------- */
 
-function ReworkRow({ rw, order: o }: { rw: any; order: any }) {
+function ReworkRow({ rw, order: o }: { rw: ReworkRequest; order: Order | undefined }) {
   const [editing, setEditing] = useState(false)
   const [reason, setReason] = useState(rw.reason)
-  const [images, setImages] = useState<any[]>(rw.images)
+  const [images, setImages] = useState<OrderImage[]>(rw.images)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const statusLabel = rw.status === 'pending' ? '审核中' : rw.status === 'approved' ? '已通过（积分已退）' : '未通过'
@@ -641,8 +647,8 @@ function ReworkRow({ rw, order: o }: { rw: any; order: any }) {
           <textarea className={cn(inputCls, 'min-h-[70px] resize-y')} placeholder="返工原因（必填）" value={reason} onChange={(e) => setReason(e.target.value)} />
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[13px] text-stone-600 hover:border-stone-500" onClick={() => fileRef.current?.click()}>+ 重新上传照片（替换原照片）</button>
-            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e) => { if (e.target.files) { const imgs: any[] = []; for (const f of Array.from(e.target.files).slice(0, 5)) { imgs.push(await readOrderFile(f)) } setImages(imgs) } }} />
-            {images.map((img: any, i: number) => <span key={i} className="font-mono text-[12px] text-stone-500">{img.name}</span>)}
+            <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e) => { if (e.target.files) { const imgs: OrderImage[] = []; for (const f of Array.from(e.target.files).slice(0, 5)) { imgs.push(await readOrderFile(f)) } setImages(imgs) } }} />
+            {images.map((img, i) => <span key={i} className="font-mono text-[12px] text-stone-500">{img.name}</span>)}
           </div>
           <div className="flex gap-2">
             <button className={btnPrimary} disabled={!reason.trim()} onClick={() => { updateReworkRequest(rw.id, reason, images); setEditing(false) }}>保存修改</button>
@@ -654,7 +660,7 @@ function ReworkRow({ rw, order: o }: { rw: any; order: any }) {
           <p className="mt-1 text-[14px] font-medium text-red-600">返工原因：{rw.reason}</p>
           {rw.images.length > 0 && (
             <div className="mt-2 flex gap-2">
-              {rw.images.map((img: any, i: number) => (
+              {rw.images.map((img, i) => (
                 <ImageThumb key={i} img={img} />
               ))}
             </div>
@@ -680,7 +686,7 @@ function OrderList({ orders, clientId }: { orders: Order[]; clientId: string }) 
   const [dateTo, setDateTo] = useState('')
   const [reworkFor, setReworkFor] = useState<string | null>(null)
   const [reason, setReason] = useState('')
-  const [reworkImages, setReworkImages] = useState<any[]>([])
+  const [reworkImages, setReworkImages] = useState<OrderImage[]>([])
   const reworkFileRef = useRef<HTMLInputElement>(null)
   const [sort, setSort] = useState<OrderSort>('new')
   const [openId, setOpenId] = useState<string | null>(null)
@@ -827,13 +833,13 @@ function OrderList({ orders, clientId }: { orders: Order[]; clientId: string }) 
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-stone-400">设计文件</span>
                           {o.designFiles.map((f, i) => <FileChip key={i} file={f} />)}
-                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.designFiles.filter((f:any)=>f.dataUrl).forEach((f:any)=>{const a=document.createElement('a');a.href=f.dataUrl;a.download=f.name;a.click()})}>批量下载文件</button>
+                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.designFiles.filter((f) => f.dataUrl || f.url).forEach((f) => { const a = document.createElement('a'); if (f.url) { a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer' } else { a.href = f.dataUrl!; a.download = f.name } a.click() })}>批量下载文件</button>
                         </div>
                       )}
                       {o.images.length > 0 && (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-stone-400">照片</span>
-                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.images.filter((img:any)=>img.dataUrl).forEach((img:any)=>{const a=document.createElement('a');a.href=img.dataUrl;a.download=img.name;a.click()})}>批量下载照片</button>
+                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.images.filter((img) => img.dataUrl || img.url).forEach((img) => { const a = document.createElement('a'); if (img.url) { a.href = img.url; a.target = '_blank'; a.rel = 'noreferrer' } else { a.href = img.dataUrl!; a.download = img.name } a.click() })}>批量下载照片</button>
                         </div>
                       )}
                       {reworkFor === o.id ? (
@@ -842,8 +848,8 @@ function OrderList({ orders, clientId }: { orders: Order[]; clientId: string }) 
                           <textarea className={cn(inputCls, 'min-h-[80px] resize-y')} placeholder="返工原因（必填）" value={reason} onChange={(e) => setReason(e.target.value)} />
                           <div className="flex items-center gap-2">
                             <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1.5 text-[13px] text-stone-600 hover:border-stone-500" onClick={() => reworkFileRef.current?.click()}>+ 上传照片</button>
-                            <input ref={reworkFileRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e) => { if(e.target.files){ const imgs: any[] = []; for(const f of Array.from(e.target.files).slice(0,5)){ imgs.push(await readOrderFile(f)) } setReworkImages(imgs) }}} />
-                            {reworkImages.map((img: any, i: number) => <span key={i} className="font-mono text-[12px] text-stone-500">{img.name}</span>)}
+                            <input ref={reworkFileRef} type="file" accept="image/*" multiple className="hidden" onChange={async (e) => { if(e.target.files){ const imgs: OrderImage[] = []; for (const f of Array.from(e.target.files).slice(0, 5)) { imgs.push(await readOrderFile(f)) } setReworkImages(imgs) }}} />
+                            {reworkImages.map((img, i) => <span key={i} className="font-mono text-[12px] text-stone-500">{img.name}</span>)}
                           </div>
                           <div className="flex gap-2">
                             <button className={btnPrimary} disabled={!reason.trim()} onClick={() => { createReworkRequest(o.id, reason.trim(), reworkImages); setReworkFor(null); setReason(''); setReworkImages([]) }}>提交返工申请</button>

@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
+import type { OrderSort } from '@/lib/order-utils'
 import type { DesignType, Order, OrderStatus, ToothCode } from '@/types'
 import { ARCH_LABELS, DESIGN_TYPES, ORDER_STATUS, toothLabel, toothSort } from '@/types'
 
@@ -54,12 +55,11 @@ export function SectionHead({ index, title, desc, right }: { index: string; titl
 
 /* 数字统计块 —— tabular figures 大数字 */
 export function Stat({ label, value, unit, tone }: { label: string; value: number | string; unit?: string; tone?: 'default' | 'warn' }) {
-  const [pop, setPop] = useState(false)
-  useEffect(() => { setPop(true); const t = setTimeout(() => setPop(false), 350); return () => clearTimeout(t) }, [value])
   return (
     <div className="border-l border-stone-300 pl-4 first:border-l-0 first:pl-0 shadow-sm">
       <div className="font-mono text-[11px] uppercase tracking-[0.18em] text-stone-400">{label}</div>
-      <div className={cn('mt-1 font-display font-mono text-[28px] leading-none tabular-nums tracking-tight', pop && 'animate-count-pop', tone === 'warn' ? 'text-red-600' : 'text-stone-900')}>
+      {/* key 随 value 变化触发重挂载，CSS 动画自然重放，无需 effect */}
+      <div key={String(value)} className={cn('mt-1 font-display font-mono text-[28px] leading-none tabular-nums tracking-tight animate-count-pop', tone === 'warn' ? 'text-red-600' : 'text-stone-900')}>
         {value}
         {unit && <span className="ml-1 text-[13px] font-normal text-stone-400">{unit}</span>}
       </div>
@@ -103,15 +103,15 @@ export const btnGhost =
   'inline-flex min-h-[44px] items-center justify-center gap-2 rounded border border-stone-300 bg-white px-4 py-2 text-[15px] font-medium text-stone-700 transition-colors duration-150 hover:border-stone-500 hover:text-stone-900 active:scale-[0.98]'
 
 /* 可下载文件标签：有内容可直接下载；演示版大文件仅记录文件名 */
-export function FileChip({ file, tone = 'green' }: { file: { name: string; dataUrl?: string }; tone?: 'green' | 'stone' }) {
+export function FileChip({ file, tone = 'green' }: { file: { name: string; dataUrl?: string; url?: string }; tone?: 'green' | 'stone' }) {
   const cls = tone === 'green'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
     : 'border-stone-300 bg-stone-50 text-stone-600'
-  if (file.dataUrl) {
+  if (file.dataUrl || file.url) {
     return (
       <a
-        href={file.dataUrl}
-        download={file.name}
+        href={file.dataUrl || file.url}
+        {...(file.dataUrl ? { download: file.name } : { target: '_blank', rel: 'noreferrer' })}
         className={cn('inline-flex items-center gap-1.5 rounded-sm border px-3 py-1 font-mono text-[13.5px] transition-colors duration-150 hover:brightness-95', cls)}
         title="点击下载"
       >
@@ -159,23 +159,25 @@ export function OrderScope({ order: o }: { order: Order }) {
 }
 
 /* 照片缩略图：点击放大（Lightbox），放大后可下载 */
-export function ImageThumb({ img, size = 'h-14 w-14' }: { img: { name: string; dataUrl?: string }; size?: string }) {
+export function ImageThumb({ img, size = 'h-14 w-14' }: { img: { name: string; dataUrl?: string; url?: string }; size?: string }) {
   const [open, setOpen] = useState(false)
+  const src = img.dataUrl || img.url
   return (
     <>
       <button type="button" className={cn('overflow-hidden rounded border border-stone-300 bg-stone-100', size)} onClick={() => setOpen(true)} title="点击放大">
-        {img.dataUrl
-          ? <img src={img.dataUrl} alt={img.name} className="h-full w-full object-cover" />
+        {src
+          ? <img src={src} alt={img.name} className="h-full w-full object-cover" />
           : <span className="flex h-full w-full items-center justify-center overflow-hidden break-all px-0.5 text-center font-mono text-[9px] leading-tight text-stone-400">{img.name}</span>}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80" onClick={() => setOpen(false)}>
           <div className="max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
-            {img.dataUrl
-              ? <img src={img.dataUrl} alt={img.name} className="max-h-[85vh] max-w-[90vw] object-contain" />
+            {src
+              ? <img src={src} alt={img.name} className="max-h-[85vh] max-w-[90vw] object-contain" />
               : <div className="bg-white px-10 py-8 font-mono text-[14px] text-stone-500">{img.name}（演示版未保存图片内容）</div>}
             <div className="mt-3 flex justify-center gap-3">
               {img.dataUrl && <a href={img.dataUrl} download={img.name} className="rounded-full bg-white px-4 py-1.5 text-[14px] text-stone-700 hover:bg-stone-100">下载照片</a>}
+              {img.url && <a href={img.url} target="_blank" rel="noreferrer" className="rounded-full bg-white px-4 py-1.5 text-[14px] text-stone-700 hover:bg-stone-100">下载照片</a>}
               <button type="button" className="rounded-full bg-white/20 px-4 py-1.5 text-[14px] text-white" onClick={() => setOpen(false)}>关闭</button>
             </div>
           </div>
@@ -235,32 +237,6 @@ export function OrderTimeline({ order: o }: { order: Order }) {
       )}
     </div>
   )
-}
-
-/* ---------------- 文件大小与订单排序 ---------------- */
-
-/** 字节数 → 可读文本，如 12.4 MB / 860 KB */
-export function fmtSize(bytes?: number): string {
-  if (!bytes || bytes <= 0) return ''
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-export type OrderSort = 'new' | 'old' | 'points' | 'status'
-
-/** 按状态的排序权重：越需要处理的排越前 */
-const STATUS_RANK: Record<string, number> = {
-  pending: 0, unassigned: 1, designing: 2, rework: 3, returned: 4, completed: 5, cancelled: 6,
-}
-
-export function sortOrders<T extends { createdAt: string; points: number; status: string }>(list: T[], sort: OrderSort): T[] {
-  const arr = [...list]
-  if (sort === 'new') arr.sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-  else if (sort === 'old') arr.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-  else if (sort === 'points') arr.sort((a, b) => b.points - a.points || b.createdAt.localeCompare(a.createdAt))
-  else arr.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || b.createdAt.localeCompare(a.createdAt))
-  return arr
 }
 
 /** 订单列表排序切换按钮组 */

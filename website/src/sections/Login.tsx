@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { authenticate, saveSession, type Session } from '@/lib/store'
+import { apiLogin, isBackendMode } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /* 左屏装饰：左上 + 右下角衬托的叶脉弧线（平滑贝塞尔） */
@@ -35,9 +36,25 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
   const [showDemo, setShowDemo] = useState(false)
 
-  const submit = () => {
+  const submit = async () => {
+    if (isBackendMode()) {
+      if (busy) return
+      setBusy(true)
+      try {
+        const r = await apiLogin(username, password)
+        const s: Session = { ...r.session, token: r.token }
+        saveSession(s)
+        onLogin(s)
+      } catch (e) {
+        setError(e instanceof Error ? e.message : '登录失败，请稍后重试')
+      } finally {
+        setBusy(false)
+      }
+      return
+    }
     const s = authenticate(username, password)
     if (!s) {
       setError('账号或密码不正确，请重试')
@@ -121,6 +138,7 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
 
             <button
               type="submit"
+              disabled={busy}
               className={cn(
                 'w-full rounded-full bg-[#1e5c46] py-3 text-[16px] font-medium text-[#faf9f5]',
                 'transition-all duration-150 hover:bg-[#2a5139] active:scale-[0.99]',

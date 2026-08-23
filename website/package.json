@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test",
+    "test:coverage": "node tests/check-coverage.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

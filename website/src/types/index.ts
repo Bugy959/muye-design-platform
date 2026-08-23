@@ -2,6 +2,15 @@
 
 export type Role = 'client' | 'designer' | 'admin'
 
+/** 登录会话：后端模式额外保存 token，演示模式无 token */
+export interface Session {
+  role: Role
+  clientId?: string
+  designerId?: string
+  username: string
+  token?: string
+}
+
 /** 设计类型：即刻设计 / 全瓷冠·基台上部冠 / 贴面·嵌体 / 马龙桥设计 */
 export type DesignType = 'jike' | 'quanci' | 'tiemian' | 'malong' | 'jita'
 
@@ -37,13 +46,8 @@ export const ORDER_STATUS: Record<OrderStatus, { label: string; tone: 'orange' |
 /** 牙位编码：U/D（上颌/下颌）+ L/R（左/右）+ 1-7，如 UL3 = 上颌左侧第 3 颗 */
 export type ToothCode = string
 
-/** FDI双位数牙位（11-17 右上, 21-27 左上, 31-37 左下, 41-47 右下） */
+/** 牙位编号展示：仅显示 FDI 编号本身（如 21），不带"左上/左下"等方位字眼 */
 export function toothLabel(code: ToothCode): string {
-  const n = parseInt(code, 10)
-  if (n >= 11 && n <= 18) return `右上${n - 10}`
-  if (n >= 21 && n <= 28) return `左上${n - 20}`
-  if (n >= 31 && n <= 38) return `左下${n - 30}`
-  if (n >= 41 && n <= 48) return `右下${n - 40}`
   return code
 }
 
@@ -85,13 +89,17 @@ export interface OrderImage {
   name: string
   dataUrl?: string
   size?: number // 字节数，用于上传列表显示文件大小
+  key?: string  // OSS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
+  url?: string  // 签名下载地址（后端返回，可短时有效）
 }
 
-/** 上传文件（扫描文件 / 设计文件）：演示版小文件内嵌 dataUrl 可下载，大文件仅记录文件名 */
+/** 上传文件（扫描文件 / 设计文件）：演示版小文件内嵌 dataUrl 可下载；大文件走 OSS，存 key */
 export interface OrderFile {
   name: string
   dataUrl?: string
   size?: number // 字节数，用于上传列表显示文件大小
+  key?: string  // OSS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
+  url?: string  // 签名下载地址（后端返回，可短时有效）
 }
 
 export interface Order {

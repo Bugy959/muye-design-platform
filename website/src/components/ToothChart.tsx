@@ -102,7 +102,7 @@ export function ToothChart({
 
 /**
  * 迷你牙位图（只读）—— 用于设计师端长条订单
- * 格子 14×14，上下两排各 18 列（8 颗 + 间隔 + 8 颗）；十字分区线 + 四象限角标 + 下方列出选中编号
+ * 格子 14×14，上下两排各 18 列（8 颗 + 间隔 + 8 颗）；十字分区线 + 下方列出选中编号
  */
 const MINI_UPPER = ['18', '17', '16', '15', '14', '13', '12', '11', '21', '22', '23', '24', '25', '26', '27', '28']
 const MINI_LOWER = ['48', '47', '46', '45', '44', '43', '42', '41', '31', '32', '33', '34', '35', '36', '37', '38']
@@ -116,13 +116,9 @@ export function ToothChartMini({ selected }: { selected: ToothCode[] }) {
   const sorted = [...selected].sort(toothSort)
   return (
     <div className="inline-block select-none">
-      <div className="relative inline-block rounded border border-stone-200 bg-stone-50/60 px-1.5 pb-4 pt-3">
-        <span className="absolute left-1.5 top-0.5 text-[9px] leading-none text-stone-400">右上</span>
-        <span className="absolute right-1.5 top-0.5 text-[9px] leading-none text-stone-400">左上</span>
-        <span className="absolute bottom-0.5 left-1.5 text-[9px] leading-none text-stone-400">右下</span>
-        <span className="absolute bottom-0.5 right-1.5 text-[9px] leading-none text-stone-400">左下</span>
+      <div className="relative inline-block rounded border border-stone-200 bg-stone-50/60 px-1.5 pb-2 pt-2">
         <span className="absolute bottom-1 left-1/2 top-1 border-l border-dashed border-stone-400" aria-hidden />
-        <span className="absolute left-1.5 right-1.5 top-[27px] border-t border-stone-200" aria-hidden />
+        <span className="absolute left-1.5 right-1.5 top-[23px] border-t border-stone-200" aria-hidden />
         <div className="grid grid-flow-col grid-rows-2 gap-[2px]" style={{ gridAutoColumns: '14px' }}>
           {cells.map((t, i) =>
             t === null ? (

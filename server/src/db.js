@@ -9,7 +9,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = path.join(__dirname, '..', 'data')
 mkdirSync(DATA_DIR, { recursive: true })
 
-export const db = new DatabaseSync(path.join(DATA_DIR, 'muye.db'))
+// 测试通过 MUYE_DB_PATH 指向临时库，避免污染真实业务数据
+export const db = new DatabaseSync(process.env.MUYE_DB_PATH || path.join(DATA_DIR, 'muye.db'))
 db.exec('PRAGMA journal_mode = WAL')
 db.exec('PRAGMA foreign_keys = ON')
 db.exec(readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'))
@@ -43,6 +44,10 @@ export function nextSeq() {
   const seq = (row ? parseInt(row.value, 10) : 1)
   db.prepare(`UPDATE meta SET value = ? WHERE key = 'seq'`).run(String(seq + 1))
   return seq
+}
+
+export function closeDb() {
+  db.close()
 }
 
 /* ---------------- 行 → 前端驼峰对象 ---------------- */

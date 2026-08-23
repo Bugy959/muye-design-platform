@@ -1,5 +1,5 @@
 // 核心业务规则测试（Node 内置 test runner，无需额外依赖）
-// 运行：node --test tests/
+// 运行：node --test
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -15,12 +15,13 @@ globalThis.localStorage = {
 const { orderPoints, orderCount, scopeLabel, designerAlias } = await import('../src/lib/store.ts')
 const { toothLabel, toothSort } = await import('../src/types/index.ts')
 
-test('toothLabel: FDI 每侧 8 颗', () => {
-  assert.equal(toothLabel('18'), '右上8')
-  assert.equal(toothLabel('28'), '左上8')
-  assert.equal(toothLabel('38'), '左下8')
-  assert.equal(toothLabel('48'), '右下8')
-  assert.equal(toothLabel('16'), '右上6')
+test('toothLabel: 仅显示 FDI 牙位编号，不带方位字眼', () => {
+  assert.equal(toothLabel('18'), '18')
+  assert.equal(toothLabel('28'), '28')
+  assert.equal(toothLabel('38'), '38')
+  assert.equal(toothLabel('48'), '48')
+  assert.equal(toothLabel('21'), '21')
+  assert.equal(toothLabel('16'), '16')
 })
 
 test('toothSort: 牙位按 FDI 数字排序', () => {
@@ -52,4 +53,9 @@ test('scopeLabel: 马龙桥/自定义范围文案', () => {
 test('designerAlias: 只显示姓氏花名', () => {
   assert.equal(designerAlias({ name: '李二' }), '李 师傅')
   assert.equal(designerAlias(undefined), '未分配')
+})
+
+test('scopeLabel: 非马龙桥/非自定义订单无范围文案', () => {
+  assert.equal(scopeLabel({ type: 'quanci', custom: false, teeth: ['11'] }), '')
+  assert.equal(scopeLabel({ type: 'malong', arch: undefined, custom: false, teeth: [] }), '马龙桥 · 全口')
 })

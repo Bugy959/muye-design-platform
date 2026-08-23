@@ -1,5 +1,6 @@
-import { useState } from "react"
-import { useDB, loadSession, saveSession, type Session } from "@/lib/store"
+import { useEffect, useState } from "react"
+import { initBackend, refreshFromServer, useDB, loadSession, saveSession, type Session } from "@/lib/store"
+import { apiLogout, API_BASE, isBackendMode } from "@/lib/api"
 import { Login } from "@/sections/Login"
 import { ClientApp } from "@/sections/ClientApp"
 import { DesignerApp } from "@/sections/DesignerApp"
@@ -8,6 +9,23 @@ import { AdminApp } from "@/sections/AdminApp"
 export default function App() {
   const db = useDB()
   const [session, setSession] = useState<Session | null>(() => loadSession())
+  const [readyFor, setReadyFor] = useState<Session | null>(null)
+  const [failedFor, setFailedFor] = useState<Session | null>(null)
+  const [retryTick, setRetryTick] = useState(0)
+  const backend = isBackendMode()
+
+  /* 后端模式：登录后先拉取服务端数据再进入应用；之后每 15 秒轮询，保证接单大厅等列表接近实时 */
+  useEffect(() => {
+    if (!session || !backend) return
+    let alive = true
+    initBackend().then((ok) => {
+      if (!alive) return
+      if (ok) setReadyFor(session)
+      else setFailedFor(session)
+    })
+    const timer = setInterval(() => { void refreshFromServer() }, 15000)
+    return () => { alive = false; clearInterval(timer) }
+  }, [session, backend, retryTick])
 
   const client = session?.role === "client" ? db.clients.find((c) => c.id === session.clientId) : undefined
   const designer = session?.role === "designer" ? db.designers.find((d) => d.id === session.designerId) : undefined
@@ -20,6 +38,7 @@ export default function App() {
     (session.role === "designer" && !!designer)
 
   const logout = () => {
+    if (backend && session?.token) apiLogout(session.token).catch(() => {})
     saveSession(null)
     setSession(null)
   }
@@ -31,6 +50,45 @@ export default function App() {
           <Login onLogin={setSession} />
         </main>
         <Disclaimer />
+      </div>
+    )
+  }
+
+  if (backend && failedFor === session) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#faf9f5] px-6 text-center">
+        <p className="text-[17px] font-medium text-stone-800">无法连接后端服务器</p>
+        <p className="mt-2 font-mono text-[13px] text-stone-400">{API_BASE}</p>
+        <p className="mt-3 text-[14px] leading-relaxed text-stone-500">
+          请先启动后端：<span className="font-mono text-[13px] text-stone-600">cd server && npm run dev</span>
+        </p>
+        <div className="mt-7 flex items-center gap-3">
+          <button
+            type="button"
+            className="rounded-full bg-[#1e5c46] px-6 py-2 text-[14px] font-medium text-[#faf9f5] transition-colors hover:bg-[#2a5139]"
+            onClick={() => { setFailedFor(null); setRetryTick((t) => t + 1) }}
+          >
+            重试
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-stone-300 px-6 py-2 text-[14px] text-stone-600 transition-colors hover:border-stone-500"
+            onClick={() => { localStorage.setItem('muye-data-mode', 'demo'); window.location.reload() }}
+          >
+            使用演示数据
+          </button>
+          <button type="button" className="px-3 py-2 text-[13px] text-stone-400 hover:text-stone-600" onClick={logout}>
+            退出登录
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (backend && readyFor !== session) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#faf9f5]">
+        <p className="text-[14px] text-stone-400">正在连接后端数据…</p>
       </div>
     )
   }
@@ -54,6 +112,16 @@ export default function App() {
               {" · "}
               {session.username}
             </span>
+            {!backend && (
+              <button
+                type="button"
+                title="当前为本地演示数据，点击切换为后端数据"
+                className="border-l border-[#ddd6c6] px-4 font-mono text-[11px] uppercase tracking-wider text-amber-600 transition-colors hover:bg-amber-50"
+                onClick={() => { localStorage.removeItem('muye-data-mode'); window.location.reload() }}
+              >
+                演示数据
+              </button>
+            )}
             <button
               type="button"
               className="border-l border-[#ddd6c6] px-5 text-[13.5px] text-[#1c1a17] transition-colors duration-150 hover:bg-[#1e5c46] hover:text-[#fdfaf6]"

@@ -1,9 +1,11 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import type { Account, Client, Order } from '@/types'
-import { addAssignment, adjustPoints, approveRework, createAccount, createClientGroup, deleteAccount, deleteClientGroup, designerAlias, dispatchUnassignedOrder, getDesignParam, isValidIdCard, isValidPhone, matchedDesignerGroupIds, monthOf, moveDesigner, orderStats, registerDesignerGroup, rejectRework, removeAssignment, renameClientGroup, renameGroup, resetPassword, saveDesignParam, searchOrders, setGroupLeader, updateGroupNote, useDB, usernameTaken } from '@/lib/store'
-import { EmptyState, Field, FileChip, ImageThumb, OrderScope, SectionHead, SortBar, Stat, StatusPill, TypeTag, btnGhost, btnPrimary, inputCls, sortOrders } from '@/components/bits'
-import type { OrderSort } from '@/components/bits'
+import { addAssignment, adjustPoints, approveRework, createAccountAsync, createClientGroup, createClientGroupAsync, deleteAccount, deleteClientGroup, designerAlias, dispatchUnassignedOrderAsync, getDesignParam, isValidIdCard, isValidPhone, matchedDesignerGroupIds, monthOf, moveDesigner, orderStats, registerDesignerGroupAsync, rejectRework, removeAssignment, renameClientGroup, renameGroup, resetPassword, saveDesignParam, searchOrders, setGroupLeader, updateGroupNote, useDB, usernameTaken } from '@/lib/store'
+import { EmptyState, Field, FileChip, ImageThumb, OrderScope, SectionHead, SortBar, Stat, StatusPill, TypeTag, btnGhost, btnPrimary, inputCls } from '@/components/bits'
+import { sortOrders } from '@/lib/order-utils'
+import { useNow } from '@/lib/use-now'
+import type { OrderSort } from '@/lib/order-utils'
 import { ARCH_LABELS, DESIGN_TYPES, ORDER_STATUS } from '@/types'
 import { cn } from '@/lib/utils'
 
@@ -243,28 +245,33 @@ function CreateAccount({ onDone }: { onDone: () => void }) {
     ? db.clients.filter((c) => !db.accounts.some((a) => a.clientId === c.id))
     : db.designers.filter((d) => !db.accounts.some((a) => a.designerId === d.id))
 
-  const submit = () => {
+  const submit = async () => {
     if (!username.trim() || password.trim().length < 4) { setError('请填写账号，密码至少 4 位'); return }
     if (usernameTaken(username)) { setError('该账号名已被使用'); return }
-    if (role === 'client') {
-      if (mode === 'existing' && !existingId) { setError('请选择要关联的医院/加工厂'); return }
-      if (mode === 'new' && (!clientForm.name.trim() || !clientForm.phone.trim())) { setError('请填写单位名称与联系电话'); return }
-      if (mode === 'new' && !isValidPhone(clientForm.phone)) { setError('联系电话格式不正确，请输入 11 位手机号'); return }
-      createAccount({
-        username, password, role,
-        clientId: mode === 'existing' ? existingId : undefined,
-        newClient: mode === 'new' ? { name: clientForm.name.trim(), phone: clientForm.phone.trim(), kind: clientForm.kind, clientGroupId: clientForm.clientGroupId || undefined } : undefined,
-      })
-    } else {
-      if (mode === 'existing' && !existingId) { setError('请选择要关联的设计师'); return }
-      if (mode === 'new' && (!designerForm.name.trim() || !designerForm.phone.trim() || !designerForm.idCard.trim())) { setError('请填写姓名、电话与身份证号'); return }
-      if (mode === 'new' && !isValidPhone(designerForm.phone)) { setError('电话格式不正确，请输入 11 位手机号'); return }
-      if (mode === 'new' && !isValidIdCard(designerForm.idCard)) { setError('身份证号格式不正确，请输入 18 位'); return }
-      createAccount({
-        username, password, role,
-        designerId: mode === 'existing' ? existingId : undefined,
-        newDesigner: mode === 'new' ? { name: designerForm.name.trim(), phone: designerForm.phone.trim(), idCard: designerForm.idCard.trim(), certNo: designerForm.certNo.trim() || undefined, groupId: designerForm.groupId || undefined } : undefined,
-      })
+    try {
+      if (role === 'client') {
+        if (mode === 'existing' && !existingId) { setError('请选择要关联的医院/加工厂'); return }
+        if (mode === 'new' && (!clientForm.name.trim() || !clientForm.phone.trim())) { setError('请填写单位名称与联系电话'); return }
+        if (mode === 'new' && !isValidPhone(clientForm.phone)) { setError('联系电话格式不正确，请输入 11 位手机号'); return }
+        await createAccountAsync({
+          username, password, role,
+          clientId: mode === 'existing' ? existingId : undefined,
+          newClient: mode === 'new' ? { name: clientForm.name.trim(), phone: clientForm.phone.trim(), kind: clientForm.kind, clientGroupId: clientForm.clientGroupId || undefined } : undefined,
+        })
+      } else {
+        if (mode === 'existing' && !existingId) { setError('请选择要关联的设计师'); return }
+        if (mode === 'new' && (!designerForm.name.trim() || !designerForm.phone.trim() || !designerForm.idCard.trim())) { setError('请填写姓名、电话与身份证号'); return }
+        if (mode === 'new' && !isValidPhone(designerForm.phone)) { setError('电话格式不正确，请输入 11 位手机号'); return }
+        if (mode === 'new' && !isValidIdCard(designerForm.idCard)) { setError('身份证号格式不正确，请输入 18 位'); return }
+        await createAccountAsync({
+          username, password, role,
+          designerId: mode === 'existing' ? existingId : undefined,
+          newDesigner: mode === 'new' ? { name: designerForm.name.trim(), phone: designerForm.phone.trim(), idCard: designerForm.idCard.trim(), certNo: designerForm.certNo.trim() || undefined, groupId: designerForm.groupId || undefined } : undefined,
+        })
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '创建账号失败')
+      return
     }
     onDone()
   }
@@ -330,7 +337,16 @@ function CreateAccount({ onDone }: { onDone: () => void }) {
             <span className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 p-3">
               <input className={cn(inputCls, 'w-40 py-1.5 text-[14px]')} placeholder="分组名" value={quickCGName} onChange={(e) => setQuickCGName(e.target.value)} />
               <input className={cn(inputCls, 'w-40 py-1.5 text-[14px]')} placeholder="备注(可选)" value={quickCGNote} onChange={(e) => setQuickCGNote(e.target.value)} />
-              <button className={btnPrimary} disabled={!quickCGName.trim()} onClick={() => { const cg = createClientGroup(quickCGName, quickCGNote); setClientForm({ ...clientForm, clientGroupId: cg.id }); setShowQuickCG(false); setQuickCGName(''); setQuickCGNote(''); }}>创建</button>
+              <button className={btnPrimary} disabled={!quickCGName.trim()} onClick={async () => {
+                try {
+                  const cg = await createClientGroupAsync(quickCGName, quickCGNote)
+                  setClientForm({ ...clientForm, clientGroupId: cg.id })
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : '创建分组失败')
+                  return
+                }
+                setShowQuickCG(false); setQuickCGName(''); setQuickCGNote('')
+              }}>创建</button>
               <button className={btnGhost} onClick={() => setShowQuickCG(false)}>取消</button>
             </span>
           )}
@@ -365,7 +381,16 @@ function CreateAccount({ onDone }: { onDone: () => void }) {
             <span className="flex items-center gap-2 rounded border border-amber-200 bg-amber-50 p-3">
               <input className={cn(inputCls, 'w-40 py-1.5 text-[14px]')} placeholder="分组名" value={quickDGName} onChange={(e) => setQuickDGName(e.target.value)} />
               <input className={cn(inputCls, 'w-40 py-1.5 text-[14px]')} placeholder="备注(可选)" value={quickDGNote} onChange={(e) => setQuickDGNote(e.target.value)} />
-              <button className={btnPrimary} disabled={!quickDGName.trim()} onClick={() => { const dg = registerDesignerGroup(quickDGName, quickDGNote); setDesignerForm({ ...designerForm, groupId: dg.id }); setShowQuickDG(false); setQuickDGName(''); setQuickDGNote(''); }}>创建</button>
+              <button className={btnPrimary} disabled={!quickDGName.trim()} onClick={async () => {
+                try {
+                  const dg = await registerDesignerGroupAsync(quickDGName, quickDGNote)
+                  setDesignerForm({ ...designerForm, groupId: dg.id })
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : '创建分组失败')
+                  return
+                }
+                setShowQuickDG(false); setQuickDGName(''); setQuickDGNote('')
+              }}>创建</button>
               <button className={btnGhost} onClick={() => setShowQuickDG(false)}>取消</button>
             </span>
           )}
@@ -395,6 +420,7 @@ function CreateAccount({ onDone }: { onDone: () => void }) {
 
 function Orders({ jump }: { jump?: { status?: string; stale?: boolean; isRework?: boolean } | null }) {
   const db = useDB()
+  const now = useNow()
   const [openId, setOpenId] = useState<string | null>(null)
   const unassignedCount = db.orders.filter((o) => o.status === 'unassigned').length
   const [statusFilter, setStatusFilter] = useState<string>('')
@@ -405,17 +431,20 @@ function Orders({ jump }: { jump?: { status?: string; stale?: boolean; isRework?
   const [staleOnly, setStaleOnly] = useState(false)
   const [reworkOnly, setReworkOnly] = useState(false)
   const [sort, setSort] = useState<OrderSort>('new')
-  useEffect(() => {
+  // 从概览卡片跳入时同步筛选条件：渲染期比较 prev 值（React 推荐的派生状态写法，无需 effect）
+  const [prevJump, setPrevJump] = useState(jump)
+  if (jump !== prevJump) {
+    setPrevJump(jump)
     if (jump) { setStatusFilter(jump.status ?? ''); setStaleOnly(!!jump.stale); setReworkOnly(!!jump.isRework) }
-  }, [jump])
-  const staleCount = db.orders.filter((o) => o.status === 'pending' && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000).length
+  }
+  const staleCount = db.orders.filter((o) => o.status === 'pending' && now - new Date(o.createdAt).getTime() > 24 * 3600 * 1000).length
   const filteredOrders = useMemo(() => {
     let base = searchOrders(db, 'admin', '', query || undefined, dateFrom || undefined, dateTo || undefined, statusFilter || undefined)
     if (clientFilter) base = base.filter((o) => o.clientId === clientFilter)
-    if (staleOnly) base = base.filter((o) => o.status === 'pending' && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000)
+    if (staleOnly) base = base.filter((o) => o.status === 'pending' && now - new Date(o.createdAt).getTime() > 24 * 3600 * 1000)
     if (reworkOnly) base = base.filter((o) => o.isRework)
     return sortOrders(base, sort)
-  }, [db, query, dateFrom, dateTo, statusFilter, clientFilter, staleOnly, reworkOnly, sort])
+  }, [db, now, query, dateFrom, dateTo, statusFilter, clientFilter, staleOnly, reworkOnly, sort])
   const exportOrdersCSV = () => {
     const head = '单号,来源,患者,类型,牙位/范围,设计师,积分,状态,提交时间\n'
     const rows = filteredOrders.map((o) => {
@@ -524,15 +553,15 @@ function Orders({ jump }: { jump?: { status?: string; stale?: boolean; isRework?
                   <td className="py-3 pr-4">
                   <span className="flex items-center gap-2">
                     <StatusPill status={o.status} />
-                    {o.status === 'pending' && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000 && (
+                    {o.status === 'pending' && now - new Date(o.createdAt).getTime() > 24 * 3600 * 1000 && (
                       <span className="rounded-full bg-red-50 px-2 py-px text-[11px] font-medium text-red-600 ring-1 ring-inset ring-red-200">超时未接</span>
                     )}
                     {o.status === 'unassigned' && (
                       <button
                         type="button"
                         className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700 hover:bg-amber-100"
-                        onClick={() => {
-                          if (!dispatchUnassignedOrder(o.id)) {
+                        onClick={async () => {
+                          if (!(await dispatchUnassignedOrderAsync(o.id))) {
                             window.alert('该订单的客户分组仍未匹配任何设计师组，直接派发会让订单无人可见。\n请先到「分组匹配」中配置好匹配关系，再点击重新派发。')
                           }
                         }}
@@ -775,6 +804,48 @@ function billOf(orders: Order[]): BillRow {
   return row
 }
 
+function BillTable({ title, rows, nameOf }: {
+  title: string
+  rows: { bill: BillRow }[]
+  nameOf: (i: number) => string
+}) {
+  return (
+  <div>
+    <h3 className="mb-3 font-mono text-[11.5px] uppercase tracking-[0.18em] text-stone-400">{title}</h3>
+    <div className="overflow-x-auto border-y border-stone-300">
+      <table className="w-full min-w-[640px] text-left text-[14px]">
+        <thead>
+          <tr className="border-b-2 border-stone-300 font-mono text-[11.5px] uppercase tracking-[0.14em] text-stone-400">
+            <th className="py-2.5 pr-4 font-medium">名称</th>
+            <th className="py-2.5 pr-4 font-medium text-right">即刻设计</th>
+            <th className="py-2.5 pr-4 font-medium text-right">全瓷冠/基台冠</th>
+            <th className="py-2.5 pr-4 font-medium text-right">贴面/嵌体</th>
+            <th className="py-2.5 pr-4 font-medium text-right">马龙桥(件)</th>
+            <th className="py-2.5 pr-4 font-medium text-right">基台</th>
+            <th className="py-2.5 pr-4 font-medium text-right">返工</th>
+            <th className="py-2.5 font-medium text-right">积分合计</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-stone-200 [&>tr:nth-child(even)]:bg-[#faf7f1] [&>tr:hover]:bg-[#eef3f0] [&>tr]:transition-colors">
+          {rows.map((r, i) => (
+            <tr key={i}>
+              <td className="py-3 pr-4 font-medium text-stone-800">{nameOf(i)}</td>
+              <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.jike || '—'}</td>
+              <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.quanci || '—'}</td>
+              <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.tiemian || '—'}</td>
+              <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.malong || '—'}</td>
+              <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.jita || '—'}</td>
+              <td className={cn('py-3 pr-4 text-right font-mono tabular-nums', r.bill.rework ? 'text-red-600' : 'text-stone-700')}>{r.bill.rework || '—'}</td>
+              <td className="py-3 text-right font-mono tabular-nums text-stone-900">{r.bill.points}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  )
+}
+
 function Bills() {
   const db = useDB()
   const months = useMemo(() => {
@@ -804,46 +875,6 @@ function Bills() {
     a.click()
     URL.revokeObjectURL(a.href)
   }
-
-  const BillTable = ({ title, rows, nameOf }: {
-    title: string
-    rows: { bill: BillRow }[]
-    nameOf: (i: number) => string
-  }) => (
-    <div>
-      <h3 className="mb-3 font-mono text-[11.5px] uppercase tracking-[0.18em] text-stone-400">{title}</h3>
-      <div className="overflow-x-auto border-y border-stone-300">
-        <table className="w-full min-w-[640px] text-left text-[14px]">
-          <thead>
-            <tr className="border-b-2 border-stone-300 font-mono text-[11.5px] uppercase tracking-[0.14em] text-stone-400">
-              <th className="py-2.5 pr-4 font-medium">名称</th>
-              <th className="py-2.5 pr-4 font-medium text-right">即刻设计</th>
-              <th className="py-2.5 pr-4 font-medium text-right">全瓷冠/基台冠</th>
-              <th className="py-2.5 pr-4 font-medium text-right">贴面/嵌体</th>
-              <th className="py-2.5 pr-4 font-medium text-right">马龙桥(件)</th>
-              <th className="py-2.5 pr-4 font-medium text-right">基台</th>
-              <th className="py-2.5 pr-4 font-medium text-right">返工</th>
-              <th className="py-2.5 font-medium text-right">积分合计</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-stone-200 [&>tr:nth-child(even)]:bg-[#faf7f1] [&>tr:hover]:bg-[#eef3f0] [&>tr]:transition-colors">
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td className="py-3 pr-4 font-medium text-stone-800">{nameOf(i)}</td>
-                <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.jike || '—'}</td>
-                <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.quanci || '—'}</td>
-                <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.tiemian || '—'}</td>
-                <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.malong || '—'}</td>
-                <td className="py-3 pr-4 text-right font-mono tabular-nums text-stone-700">{r.bill.jita || '—'}</td>
-                <td className={cn('py-3 pr-4 text-right font-mono tabular-nums', r.bill.rework ? 'text-red-600' : 'text-stone-700')}>{r.bill.rework || '—'}</td>
-                <td className="py-3 text-right font-mono tabular-nums text-stone-900">{r.bill.points}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
 
   return (
     <section>
@@ -896,8 +927,9 @@ function Bills() {
 
 function Overview({ onJump }: { onJump: (j: { status?: string; stale?: boolean; isRework?: boolean }) => void }) {
   const db = useDB()
+  const now = useNow()
   const stats = orderStats(db, 'admin', '')
-  const stale = db.orders.filter((o) => o.status === 'pending' && Date.now() - new Date(o.createdAt).getTime() > 24 * 3600 * 1000).length
+  const stale = db.orders.filter((o) => o.status === 'pending' && now - new Date(o.createdAt).getTime() > 24 * 3600 * 1000).length
   const cards: { label: string; value: number; hot?: boolean; numCls: string; jump: { status?: string; stale?: boolean; isRework?: boolean } }[] = [
     { label: '总订单', value: stats.total, numCls: 'text-stone-900', jump: {} },
     { label: '本月新增', value: stats.monthly, numCls: 'text-stone-900', jump: {} },
