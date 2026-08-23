@@ -8,7 +8,7 @@
 | 项目 | 选择 | 原因 |
 |------|------|------|
 | 运行时 | Node.js ≥ 22.13（内置 `node:sqlite` 自 22.13 起默认可用） | 与前端同一语言，维护简单 |
-| 框架 | Express（唯一外部依赖） | 成熟、资料多、招人容易 |
+| 框架 | Express（业务）+ ali-oss（OSS 大文件直传） | 成熟、资料多、招人容易 |
 | 数据库 | SQLite（Node 内置 `node:sqlite`） | 零安装、单文件好备份；量大了可平迁 MySQL，表结构已按通用 SQL 设计 |
 | 密码 | scrypt 加密（Node 内置） | 永不存明文 |
 | 登录 | 令牌（token）7 天有效 | 改密码/删账号后令牌立即失效 |
@@ -17,7 +17,7 @@
 
 ```bash
 cd server
-npm install        # 首次：安装 Express
+npm install        # 首次：安装依赖（Express + ali-oss）
 npm start          # 启动，默认 http://localhost:3001
 ```
 
@@ -71,7 +71,21 @@ npm start          # 启动，默认 http://localhost:3001
 | POST | `/admin/design-params` | 管理 | 保存医院设计参数 |
 | POST | `/admin/orders/:id/dispatch` | 管理 | 未分配订单重新派发 |
 
-## 安全要点（已内置）
+
+## 大文件上云（OSS 直传，2026-08-23）
+
+口扫文件/照片/设计稿走**对象存储直传**，不经过本服务器（详见根目录《服务器部署详细指南.md》第 12 章）。
+
+- 流程：浏览器向后端 `POST /api/files/upload-token` 申请凭证 → 直接把文件 PUT 到 OSS → 订单只存文件 key → 下载时后端把 key 换成短时签名地址（bootstrap 自动处理）。
+- 环境变量（未配置时上传接口返回 400，其余接口不受影响；`server/src/files.js`）：
+
+| 变量 | 说明 |
+|---|---|
+| `OSS_REGION` | 地域，如 `oss-cn-hangzhou`（默认值） |
+| `OSS_BUCKET` | 存储桶名（私有读写） |
+| `OSS_ACCESS_KEY_ID` | AccessKey ID |
+| `OSS_ACCESS_KEY_SECRET` | AccessKey Secret |
+
 
 - 所有写操作校验登录与角色；医院只能动自己的订单，设计师只能接匹配范围内的单
 - 积分增减全部在数据库事务内完成，余额不足直接回滚，不可能扣成负数（管理端扣减也拦）
@@ -80,7 +94,7 @@ npm start          # 启动，默认 http://localhost:3001
 
 ## 上线前还要做的事（见根目录《服务器部署整改方案.md》）
 
-1. 口扫文件/照片改传对象存储（OSS/COS），数据库只存地址
+1. ~~口扫文件/照片改传对象存储（OSS/COS）~~ ✅ 代码已实现（2026-08-23），待配置 OSS 环境变量后启用
 2. HTTPS + 域名 + ICP 备案
 3. 数据库每日自动备份
 4. CORS 改为只允许正式域名
