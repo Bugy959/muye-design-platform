@@ -168,3 +168,28 @@ export async function apiUploadFile(uploadUrl: string, file: File): Promise<void
   })
   if (!response.ok) throw new Error(`文件上传失败（${response.status}）`)
 }
+
+/** 分片上传第一步：向后端初始化，拿 key + uploadId */
+export const apiUploadInit = (token: string, name: string, size: number) =>
+  apiFetch<{ key: string; uploadId: string }>('/files/upload-init', { method: 'POST', token, body: { name, size } })
+
+/** 分片上传第二步：给某个分片签发 OSS 预签名 PUT 地址 */
+export const apiUploadPartUrl = (token: string, key: string, uploadId: string, partNumber: number) =>
+  apiFetch<{ uploadUrl: string }>('/files/upload-part-url', { method: 'POST', token, body: { key, uploadId, partNumber } })
+
+/** 分片上传第三步：通知后端合并所有分片 */
+export const apiUploadComplete = (token: string, key: string, uploadId: string, parts: { number: number; etag: string }[]) =>
+  apiFetch<{ ok: boolean }>('/files/upload-complete', { method: 'POST', token, body: { key, uploadId, parts } })
+
+/** 上传一个分片（Blob），返回 OSS 返回的 ETag（需 OSS CORS 的 ExposeHeaders 包含 ETag） */
+export async function apiUploadPart(uploadUrl: string, blob: Blob): Promise<string> {
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: blob,
+  })
+  if (!response.ok) throw new Error(`分片上传失败（${response.status}）`)
+  const etag = response.headers.get('ETag')
+  if (!etag) throw new Error('分片上传缺少 ETag（请检查 OSS CORS ExposeHeaders 是否包含 ETag）')
+  return etag
+}

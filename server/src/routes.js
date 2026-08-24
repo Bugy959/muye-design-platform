@@ -7,7 +7,7 @@ import {
   rowToAssignment, rowToTxn, rowToNotice, rowToRework, rowToAccount, rowToParam,
 } from './db.js'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } from './auth.js'
-import { ossConfigured, getDownloadUrl, getUploadTarget } from './files.js'
+import { ossConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload } from './files.js'
 
 export const routes = Router()
 
@@ -73,7 +73,11 @@ function addTxn(clientId, delta, balance, reason, orderId) {
 /** 统一错误处理包装 */
 const h = (fn) => (req, res) => {
   try {
-    fn(req, res)
+    Promise.resolve(fn(req, res)).catch((e) => {
+      if (e?.expose) return res.status(400).json({ error: e.message })
+      console.error('[muye] API 错误:', e)
+      res.status(500).json({ error: '服务器内部错误，请稍后重试' })
+    })
   } catch (e) {
     if (e?.expose) return res.status(400).json({ error: e.message })
     console.error('[muye] API 错误:', e)
@@ -545,4 +549,26 @@ routes.post('/files/upload-token', requireAuth, h((req, res) => {
   if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
   const { key, uploadUrl } = getUploadTarget(name, size)
   res.json({ key, uploadUrl })
+}))
+
+/* ---- 大文件分片直传（multipart，可断点续传；见《服务器部署详细指南.md》第 12 章） ---- */
+
+routes.post('/files/upload-init', requireAuth, h(async (req, res) => {
+  const { name, size } = req.body || {}
+  if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
+  const { key, uploadId } = await initMultipartUpload(name, size)
+  res.json({ key, uploadId })
+}))
+
+routes.post('/files/upload-part-url', requireAuth, h((req, res) => {
+  const { key, uploadId, partNumber } = req.body || {}
+  if (!key || !uploadId) return bad(res, '缺少分片参数')
+  res.json({ uploadUrl: getUploadPartUrl(key, uploadId, partNumber) })
+}))
+
+routes.post('/files/upload-complete', requireAuth, h(async (req, res) => {
+  const { key, uploadId, parts } = req.body || {}
+  if (!key || !uploadId) return bad(res, '缺少分片参数')
+  await completeMultipartUpload(key, uploadId, parts)
+  res.json({ ok: true })
 }))

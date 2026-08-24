@@ -77,6 +77,8 @@ npm start          # 启动，默认 http://localhost:3001
 口扫文件/照片/设计稿走**对象存储直传**，不经过本服务器（详见根目录《服务器部署详细指南.md》第 12 章）。
 
 - 流程：浏览器向后端 `POST /api/files/upload-token` 申请凭证 → 直接把文件 PUT 到 OSS → 订单只存文件 key → 下载时后端把 key 换成短时签名地址（bootstrap 自动处理）。
+- 大文件（>50MB）自动走**分片直传**：`/files/upload-init` → `/files/upload-part-url` → `/files/upload-complete`，浏览器逐片上传、断点续传；OSS CORS 的 ExposeHeaders 须包含 `ETag`。
+- 预签名有效期：上传 1 小时、下载 2 小时（`server/src/files.js`）。
 - 环境变量（未配置时上传接口返回 400，其余接口不受影响；`server/src/files.js`）：
 
 | 变量 | 说明 |

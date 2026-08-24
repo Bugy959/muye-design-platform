@@ -6,7 +6,7 @@ import {
   apiCreateAccount, apiCreateClientGroup, apiCreateDesignerGroup, apiCreateOrder, apiCreateRework, apiDeleteAccount,
   apiDeleteClientGroup, apiDispatchOrder, apiMarkAllNoticesRead, apiMarkNoticeRead, apiMoveClient, apiMoveDesigner,
   apiRejectRework, apiRemoveAssignment, apiResetPassword, apiResubmitOrder, apiReturnOrder, apiSaveDesignParam,
-  apiGetUploadToken, apiSubmitDesign, apiUpdateClientGroup, apiUpdateGroup, apiUpdateRework, apiUploadFile, isBackendMode,
+  apiGetUploadToken, apiSubmitDesign, apiUpdateClientGroup, apiUpdateGroup, apiUpdateRework, apiUploadComplete, apiUploadFile, apiUploadInit, apiUploadPart, apiUploadPartUrl, isBackendMode,
 } from './api.ts'
 
 const KEY = 'muye-design-platform-v5'
@@ -998,14 +998,92 @@ export async function readOrderFile(file: File): Promise<OrderFile> {
   })
 }
 
-/**
- * 上传口扫/照片到 OSS，返回订单可保存的文件对象（大文件 key 模式）。
- * 依赖后端已配置 OSS；未配置时后端会返回 400（本函数会抛错提示）。
- */
-export async function uploadOrderFile(file: File): Promise<OrderFile> {
+/** 超过该大小走分片直传（multipart），否则单次 PUT */
+const MULTIPART_THRESHOLD = 50 * 1024 * 1024
+/** 分片大小：5MB */
+const PART_SIZE = 5 * 1024 * 1024
+/** 分片并发数 */
+const PART_CONCURRENCY = 4
+
+/** 断点续传检查点 key（同一文件续传：大小 + 修改时间 + 文件名） */
+function uploadCheckpointKey(file: { name: string; size: number; lastModified?: number }) {
+  return `muye-upload-${file.size}-${file.lastModified ?? 0}-${file.name}`
+}
+
+/** 分片直传（可断点续传）：并发上传未完成分片，全部完成后合并 */
+async function uploadMultipart(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
   const token = tokenOf()
   if (!token) throw new Error('未登录')
+  const total = file.size
+  const partCount = Math.max(1, Math.ceil(total / PART_SIZE))
+
+  // 续传：读取本地检查点（同一文件未传完时跳过已完成分片）
+  const ckKey = uploadCheckpointKey(file)
+  let ck: { key: string; uploadId: string; done: number[]; etags: Record<number, string> } | null = null
+  try {
+    const raw = localStorage.getItem(ckKey)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (parsed && parsed.key && parsed.uploadId && Array.isArray(parsed.done)) ck = parsed
+    }
+  } catch { /* 忽略损坏的检查点 */ }
+
+  if (!ck) {
+    const init = await apiUploadInit(token, file.name, total)
+    ck = { key: init.key, uploadId: init.uploadId, done: [], etags: {} }
+  }
+
+  const doneSet = new Set(ck.done)
+  const etagByPart: Map<number, string> = new Map()
+  if (ck.etags) {
+    for (const [n, etag] of Object.entries(ck.etags)) etagByPart.set(Number(n), etag)
+  }
+  const queue = Array.from({ length: partCount }, (_, i) => i + 1).filter((n) => !doneSet.has(n))
+  let cursor = 0
+  let completed = doneSet.size
+
+  const worker = async () => {
+    while (cursor < queue.length) {
+      const n = queue[cursor++]
+      const start = (n - 1) * PART_SIZE
+      const blob = file.slice(start, Math.min(start + PART_SIZE, total))
+      const { uploadUrl } = await apiUploadPartUrl(token, ck!.key, ck!.uploadId, n)
+      const etag = await apiUploadPart(uploadUrl, blob)
+      etagByPart.set(n, etag)
+      doneSet.add(n)
+      completed += 1
+      onProgress?.({ uploaded: Math.min(completed * PART_SIZE, total), total, percent: Math.round((completed / partCount) * 100) })
+      // 每传完一片就写检查点，断网/刷新后可从断点续传
+      localStorage.setItem(ckKey, JSON.stringify({
+        key: ck!.key,
+        uploadId: ck!.uploadId,
+        done: [...doneSet].sort((a, b) => a - b),
+        etags: Object.fromEntries(etagByPart),
+      }))
+    }
+  }
+
+  // 分片失败时保留检查点（每个分片完成即写入），下次可断点续传
+  await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, queue.length) }, () => worker()))
+  const parts = [...etagByPart.keys()].sort((a, b) => a - b).map((n) => ({ number: n, etag: etagByPart.get(n)! }))
+  await apiUploadComplete(token, ck.key, ck.uploadId, parts)
+  localStorage.removeItem(ckKey) // 上传完成，清理检查点
+  return { name: file.name, key: ck.key, size: file.size }
+}
+
+/**
+ * 上传口扫/照片到 OSS，返回订单可保存的文件对象（大文件 key 模式）。
+ * ≤50MB 单次直传；>50MB 分片直传（自动断点续传）。依赖后端已配置 OSS，否则后端返回 400。
+ * @param onProgress 可选，上传进度回调 { uploaded, total, percent }
+ */
+export async function uploadOrderFile(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
+  const token = tokenOf()
+  if (!token) throw new Error('未登录')
+  if (file.size > MULTIPART_THRESHOLD) {
+    return uploadMultipart(file, onProgress)
+  }
   const { key, uploadUrl } = await apiGetUploadToken(token, file.name, file.size)
   await apiUploadFile(uploadUrl, file)
+  onProgress?.({ uploaded: file.size, total: file.size, percent: 100 })
   return { name: file.name, key, size: file.size }
 }

@@ -310,7 +310,7 @@ test('createAccountAsync: 演示模式本地创建，后端模式推送并刷新
   assert.ok(calls.some((c) => c.url.endsWith('/bootstrap')))
 })
 
-test('uploadOrderFile: 获取 OSS 凭证 → 直传 → 返回 key 文件对象', async () => {
+test('uploadOrderFile: 小文件用单次直传', async () => {
   calls.length = 0
   let putCalls = 0
   fetchImpl = (url) => (url.endsWith('/files/upload-token') ? json(200, { key: 'uploads/2026-08-23/abc.stl', uploadUrl: 'https://oss.example/abc.stl' }) : json(404, {}))
@@ -321,8 +321,8 @@ test('uploadOrderFile: 获取 OSS 凭证 → 直传 → 返回 key 文件对象'
     return originalFetch(url, opts)
   }
   try {
-    const f = await store.uploadOrderFile({ name: 'scan.stl', size: 600 * 1024 * 1024 })
-    assert.deepEqual(f, { name: 'scan.stl', key: 'uploads/2026-08-23/abc.stl', size: 600 * 1024 * 1024 })
+    const f = await store.uploadOrderFile({ name: 'scan.stl', size: 1024 * 1024 })
+    assert.deepEqual(f, { name: 'scan.stl', key: 'uploads/2026-08-23/abc.stl', size: 1024 * 1024 })
     assert.equal(putCalls, 1)
     assert.ok(calls.some((c) => c.url.endsWith('/files/upload-token') && c.method === 'POST'))
   } finally {
@@ -375,5 +375,112 @@ test('readOrderFile: 小文件在后端模式仍内嵌 dataUrl，不调 OSS', as
     assert.equal(calls.length, 0)
   } finally {
     delete globalThis.FileReader
+  }
+})
+
+test('uploadOrderFile: 大文件走分片直传并合并', async () => {
+  calls.length = 0
+  const size = 51 * 1024 * 1024
+  const parts = Math.ceil(size / (5 * 1024 * 1024)) // 11
+  let partPuts = 0
+  const etagFor = (n) => `"${String(n).padStart(32, '0')}"`
+  fetchImpl = (url) => {
+    if (url.endsWith('/files/upload-init')) return json(200, { key: 'uploads/2026-08-24/big.stl', uploadId: 'uid-1' })
+    if (url.endsWith('/files/upload-part-url')) return json(200, { uploadUrl: 'https://oss.example/part' })
+    if (url.endsWith('/files/upload-complete')) return json(200, { ok: true })
+    return json(404, {})
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
+      partPuts += 1
+      return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts) }), json: async () => ({}) }
+    }
+    return originalFetch(url, opts)
+  }
+  try {
+    const file = new File([new Uint8Array(size)], 'big.stl', { lastModified: 123 })
+    let lastPercent = -1
+    const f = await store.uploadOrderFile(file, (p) => { lastPercent = p.percent })
+    assert.deepEqual(f, { name: 'big.stl', key: 'uploads/2026-08-24/big.stl', size })
+    assert.equal(partPuts, parts)
+    assert.equal(lastPercent, 100)
+    assert.ok(calls.some((c) => c.url.endsWith('/files/upload-init') && c.method === 'POST'))
+    assert.ok(calls.some((c) => c.url.endsWith('/files/upload-complete') && c.method === 'POST'))
+    // 完成后检查点已清理
+    assert.equal(globalThis.localStorage.getItem(`muye-upload-${size}-123-big.stl`), null)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('uploadOrderFile: 断点续传，跳过已完成分片', async () => {
+  calls.length = 0
+  const size = 51 * 1024 * 1024
+  const parts = Math.ceil(size / (5 * 1024 * 1024)) // 11
+  let partPuts = 0
+  let completeParts = null
+  const etagFor = (n) => `"${String(n).padStart(32, '0')}"`
+  // 预置检查点：前 3 片已完成（含 etag）
+  globalThis.localStorage.setItem(`muye-upload-${size}-456-big.stl`, JSON.stringify({
+    key: 'uploads/2026-08-24/big.stl', uploadId: 'uid-9', done: [1, 2, 3],
+    etags: { 1: etagFor(1), 2: etagFor(2), 3: etagFor(3) },
+  }))
+  fetchImpl = (url, opts = {}) => {
+    if (url.endsWith('/files/upload-part-url')) return json(200, { uploadUrl: 'https://oss.example/part' })
+    if (url.endsWith('/files/upload-complete')) { completeParts = JSON.parse(opts.body).parts; return json(200, { ok: true }) }
+    return json(404, {})
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
+      partPuts += 1
+      return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts + 3) }), json: async () => ({}) }
+    }
+    return originalFetch(url, opts)
+  }
+  try {
+    const file = new File([new Uint8Array(size)], 'big.stl', { lastModified: 456 })
+    const f = await store.uploadOrderFile(file)
+    assert.equal(partPuts, parts - 3)          // 只补传剩余 8 片
+    assert.equal(completeParts.length, parts)  // 合并全部 11 片
+    assert.equal(completeParts[0].number, 1)
+    assert.equal(completeParts[parts - 1].number, parts)
+    assert.deepEqual(f, { name: 'big.stl', key: 'uploads/2026-08-24/big.stl', size })
+    assert.equal(globalThis.localStorage.getItem(`muye-upload-${size}-456-big.stl`), null)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('uploadOrderFile: 分片中途失败保留检查点，可在下次续传', async () => {
+  calls.length = 0
+  const size = 51 * 1024 * 1024
+  const parts = Math.ceil(size / (5 * 1024 * 1024)) // 11
+  let partPuts = 0
+  const etagFor = (n) => `"${String(n).padStart(32, '0')}"`
+  fetchImpl = (url) => {
+    if (url.endsWith('/files/upload-init')) return json(200, { key: 'uploads/2026-08-24/big.stl', uploadId: 'uid-7' })
+    if (url.endsWith('/files/upload-part-url')) return json(200, { uploadUrl: 'https://oss.example/part' })
+    return json(404, {})
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
+      partPuts += 1
+      if (partPuts === 2) return { ok: false, status: 500, json: async () => ({}) } // 第 2 个分片失败
+      return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts) }), json: async () => ({}) }
+    }
+    return originalFetch(url, opts)
+  }
+  try {
+    const file = new File([new Uint8Array(size)], 'big.stl', { lastModified: 789 })
+    await assert.rejects(store.uploadOrderFile(file), /500/)
+    // 检查点保留：done 里至少有第 1 片
+    const ck = JSON.parse(globalThis.localStorage.getItem(`muye-upload-${size}-789-big.stl`))
+    assert.equal(ck.uploadId, 'uid-7')
+    assert.ok(ck.done.length >= 1)
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })

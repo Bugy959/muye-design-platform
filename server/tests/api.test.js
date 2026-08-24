@@ -821,3 +821,57 @@ test('文件上传凭证：配置 OSS 后签发直传地址，订单 key 文件�
     delete process.env.OSS_ACCESS_KEY_SECRET
   }
 })
+
+/* ==================== 大文件分片直传（multipart） ==================== */
+
+test('分片上传：参数校验与未配置 OSS 的兜底', async () => {
+  const client = await login('mingzhou', '123456')
+  delete process.env.OSS_BUCKET
+  delete process.env.OSS_ACCESS_KEY_ID
+  delete process.env.OSS_ACCESS_KEY_SECRET
+
+  // init：缺参 / 超 1GB / 未配置 OSS
+  assert.equal((await api('POST', '/files/upload-init', { token: client.token, body: {} })).status, 400)
+  const big = await api('POST', '/files/upload-init', { token: client.token, body: { name: 'x.stl', size: 1024 * 1024 * 1024 + 1 } })
+  assert.equal(big.status, 400)
+  assert.match(big.data.error, /1GB/)
+  const noOss = await api('POST', '/files/upload-init', { token: client.token, body: { name: 'x.stl', size: 100 } })
+  assert.equal(noOss.status, 400)
+  assert.match(noOss.data.error, /OSS/)
+
+  // part-url：缺参 / 非法分片号（本地校验即可拦下，无需 OSS）
+  assert.equal((await api('POST', '/files/upload-part-url', { token: client.token, body: {} })).status, 400)
+  const badPart = await api('POST', '/files/upload-part-url', { token: client.token, body: { key: 'k', uploadId: 'u', partNumber: 0 } })
+  assert.equal(badPart.status, 400)
+  assert.match(badPart.data.error, /分片编号/)
+
+  // complete：缺参 / 空分片 / 坏 etag
+  assert.equal((await api('POST', '/files/upload-complete', { token: client.token, body: {} })).status, 400)
+  assert.equal((await api('POST', '/files/upload-complete', { token: client.token, body: { key: 'k', uploadId: 'u', parts: [] } })).status, 400)
+  const badEtag = await api('POST', '/files/upload-complete', { token: client.token, body: { key: 'k', uploadId: 'u', parts: [{ number: 1, etag: 'not-a-hash' }] } })
+  assert.equal(badEtag.status, 400)
+  assert.match(badEtag.data.error, /分片信息/)
+})
+
+test('分片上传：配置 OSS 后为分片签发预签名地址', async () => {
+  const client = await login('mingzhou', '123456')
+  process.env.OSS_REGION = 'oss-cn-hangzhou'
+  process.env.OSS_BUCKET = 'test-bucket'
+  process.env.OSS_ACCESS_KEY_ID = 'test-key'
+  process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
+  try {
+    const r = await api('POST', '/files/upload-part-url', {
+      token: client.token,
+      body: { key: 'uploads/2026-08-24/x.stl', uploadId: 'upload-1', partNumber: 3 },
+    })
+    assert.equal(r.status, 200)
+    assert.match(r.data.uploadUrl, /test-bucket\.oss-cn-hangzhou\.aliyuncs\.com/)
+    assert.match(r.data.uploadUrl, /partNumber=3/)
+    assert.match(r.data.uploadUrl, /uploadId=upload-1/)
+  } finally {
+    delete process.env.OSS_REGION
+    delete process.env.OSS_BUCKET
+    delete process.env.OSS_ACCESS_KEY_ID
+    delete process.env.OSS_ACCESS_KEY_SECRET
+  }
+})

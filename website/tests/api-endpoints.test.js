@@ -161,3 +161,35 @@ test('大文件 OSS 端点', async () => {
     globalThis.fetch = originalFetch
   }
 })
+
+test('分片上传端点', async () => {
+  const init = await expectCall(() => api.apiUploadInit(TOKEN, 'big.stl', 60 * 1024 * 1024), {
+    url: '/files/upload-init', method: 'POST', body: { name: 'big.stl', size: 60 * 1024 * 1024 },
+  })
+  assert.deepEqual(init, { ok: true })
+  await expectCall(() => api.apiUploadPartUrl(TOKEN, 'k', 'u1', 3), {
+    url: '/files/upload-part-url', method: 'POST', body: { key: 'k', uploadId: 'u1', partNumber: 3 },
+  })
+  await expectCall(() => api.apiUploadComplete(TOKEN, 'k', 'u1', [{ number: 1, etag: '"abc"' }]), {
+    url: '/files/upload-complete', method: 'POST', body: { key: 'k', uploadId: 'u1', parts: [{ number: 1, etag: '"abc"' }] },
+  })
+
+  // apiUploadPart：PUT 分片并读取 ETag
+  const originalFetch = globalThis.fetch
+  let putSeen = null
+  globalThis.fetch = async (url, opts = {}) => {
+    putSeen = { url: String(url), method: opts.method }
+    return { ok: true, status: 200, headers: new Headers({ ETag: '"abc123"' }), json: async () => ({}) }
+  }
+  try {
+    const etag = await api.apiUploadPart('https://oss.example/p', new Blob(['x']))
+    assert.equal(etag, '"abc123"')
+    assert.equal(putSeen.method, 'PUT')
+  } finally { globalThis.fetch = originalFetch }
+
+  // ETag 缺失时报错（提示检查 OSS CORS ExposeHeaders）
+  globalThis.fetch = async () => ({ ok: true, status: 200, headers: new Headers({}), json: async () => ({}) })
+  try {
+    await assert.rejects(api.apiUploadPart('https://oss.example/p', new Blob(['x'])), /ETag/)
+  } finally { globalThis.fetch = originalFetch }
+})
