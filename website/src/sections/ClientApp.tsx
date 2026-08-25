@@ -166,6 +166,8 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
   const [submitting, setSubmitting] = useState(false)
   const [done, setDone] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [uploadProg, setUploadProg] = useState<Record<string, number>>({})
+  const progKey = (name: string, size: number) => `${name}-${size}`
   const scanRef = useRef<HTMLInputElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -179,9 +181,15 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
   const pickScans = async (files: FileList | null) => {
     if (!files) return
     for (const f of Array.from(files)) {
-      setScanFiles((prev) => [...prev, { name: f.name }]) // 先占位
-      const of = await readOrderFile(f)
-      setScanFiles((prev) => prev.map((x, i) => (x.name === of.name && !x.dataUrl && i === prev.findIndex((y) => y.name === of.name && !y.dataUrl) ? of : x)))
+      const key = progKey(f.name, f.size)
+      setScanFiles((prev) => [...prev, { name: f.name, size: f.size }]) // 先占位
+      setUploadProg((prev) => ({ ...prev, [key]: 0 }))
+      try {
+        const of = await readOrderFile(f, (p) => setUploadProg((prev) => ({ ...prev, [key]: p.percent })))
+        setScanFiles((prev) => prev.map((x, i) => (x.name === of.name && x.size === of.size && !x.dataUrl && i === prev.findIndex((y) => y.name === of.name && y.size === of.size && !y.dataUrl) ? of : x)))
+      } finally {
+        setUploadProg((prev) => { const next = { ...prev }; delete next[key]; return next })
+      }
     }
   }
 
@@ -189,8 +197,14 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
     if (!files) return
     Array.from(files).forEach(async (f) => {
       if (isFileTooLarge(f, 10)) { setError('照片超出 10MB 限制，请压缩后重试'); return }
-      const of = await readOrderFile(f)
-      setImages((prev) => [...prev, of])
+      const key = progKey(f.name, f.size)
+      setUploadProg((prev) => ({ ...prev, [key]: 0 }))
+      try {
+        const of = await readOrderFile(f, (p) => setUploadProg((prev) => ({ ...prev, [key]: p.percent })))
+        setImages((prev) => [...prev, of])
+      } finally {
+        setUploadProg((prev) => { const next = { ...prev }; delete next[key]; return next })
+      }
     })
   }
 
@@ -383,6 +397,14 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
               {scanFiles.map((f, i) => (
                 <span key={i} className="inline-flex items-center gap-1.5 rounded-full border border-sky-300 bg-sky-50 px-3 py-1.5 font-mono text-[12.5px] text-sky-800">
                   {f.name}{f.size ? `（${fmtSize(f.size)}）` : ''}
+                  {uploadProg[f.size ? progKey(f.name, f.size) : ""] !== undefined && (
+                    <span className="inline-flex items-center gap-1 text-[11px] text-sky-600">
+                      <span className="h-1 w-14 overflow-hidden rounded-full bg-sky-200">
+                        <span className="block h-full rounded-full bg-sky-500 transition-all" style={{ width: `${uploadProg[f.size ? progKey(f.name, f.size) : ""]}%` }} />
+                      </span>
+                      <span className="tabular-nums">{uploadProg[f.size ? progKey(f.name, f.size) : ""]}%</span>
+                    </span>
+                  )}
                   <button type="button" className="text-sky-400 hover:text-sky-700" onClick={() => setScanFiles((prev) => prev.filter((_, x) => x !== i))}>×</button>
                 </span>
               ))}
@@ -403,6 +425,13 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
                 <div key={i} className="group relative h-20 w-20 overflow-hidden rounded-md border border-emerald-300 bg-emerald-50">
                   {img.dataUrl ? (
                     <img src={img.dataUrl} alt={img.name} className="h-full w-full object-cover" />
+                  ) : uploadProg[img.size ? progKey(img.name, img.size) : ""] !== undefined ? (
+                    <div className="flex h-full w-full flex-col items-center justify-center gap-1 px-1">
+                      <span className="font-mono text-[11px] tabular-nums text-emerald-600">{uploadProg[img.size ? progKey(img.name, img.size) : ""]}%</span>
+                      <span className="h-1 w-12 overflow-hidden rounded-full bg-emerald-200">
+                        <span className="block h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${uploadProg[img.size ? progKey(img.name, img.size) : ""]}%` }} />
+                      </span>
+                    </div>
                   ) : (
                     <span className="flex h-full w-full items-center justify-center px-1 text-center font-mono text-[10px] text-stone-400">{img.name}</span>
                   )}

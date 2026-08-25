@@ -978,11 +978,11 @@ export async function createAccountAsync(input: Parameters<typeof createAccount>
 
 const EMBED_LIMIT = 1500 * 1024 // 单文件约 1.5MB
 
-export async function readOrderFile(file: File): Promise<OrderFile> {
+export async function readOrderFile(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
   // 大文件在后端模式优先走 OSS 直传（真实内容不丢失）；OSS 未配置/失败时回退为仅记录文件名
   if (file.size > EMBED_LIMIT && isBackendMode()) {
     try {
-      const uploaded = await uploadOrderFile(file)
+      const uploaded = await uploadOrderFile(file, onProgress)
       return { name: uploaded.name, key: uploaded.key, size: uploaded.size }
     } catch { /* 回退：仅记录文件名，保持旧行为 */ }
   }

@@ -484,3 +484,21 @@ test('uploadOrderFile: 分片中途失败保留检查点，可在下次续传', 
     globalThis.fetch = originalFetch
   }
 })
+
+test('readOrderFile: 大文件 OSS 直传时透传进度回调', async () => {
+  calls.length = 0
+  fetchImpl = (url) => (url.endsWith('/files/upload-token') ? json(200, { key: 'uploads/2026-08-23/p.stl', uploadUrl: 'https://oss.example/p.stl' }) : json(404, {}))
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/p.stl' && opts.method === 'PUT') return { ok: true, status: 200, json: async () => ({}) }
+    return originalFetch(url, opts)
+  }
+  try {
+    let last = -1
+    const f = await store.readOrderFile({ name: 'p.stl', size: 2 * 1024 * 1024 }, (p) => { last = p.percent })
+    assert.deepEqual(f, { name: 'p.stl', key: 'uploads/2026-08-23/p.stl', size: 2 * 1024 * 1024 })
+    assert.equal(last, 100)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

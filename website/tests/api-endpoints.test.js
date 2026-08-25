@@ -193,3 +193,25 @@ test('分片上传端点', async () => {
     await assert.rejects(api.apiUploadPart('https://oss.example/p', new Blob(['x'])), /ETag/)
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('apiFetch: 请求超时抛友好错误（fetchWithTimeout）', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = (url, opts = {}) => new Promise((_, reject) => {
+      opts.signal?.addEventListener('abort', () => reject(opts.signal.reason))
+    })
+    await assert.rejects(api.fetchWithTimeout('http://x.test/timeout', {}, 30), /请求超时/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('apiFetch: 网络错误原样抛出（非超时）', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = () => { throw new Error('网络断开') }
+    await assert.rejects(api.apiFetch('/health'), /网络断开/)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

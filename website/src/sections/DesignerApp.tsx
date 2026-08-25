@@ -291,7 +291,7 @@ function MineRow({ order: o }: { order: Order }) {
 
   const pick = async (list: FileList | null) => {
     if (!list) return
-    const picked = await Promise.all(Array.from(list).map(readOrderFile))
+    const picked = await Promise.all(Array.from(list).map((f) => readOrderFile(f)))
     setFiles((prev) => [...prev, ...picked].slice(0, 6))
   }
   const startPicking = (e: React.MouseEvent) => {

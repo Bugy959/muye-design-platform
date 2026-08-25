@@ -8,6 +8,7 @@ import {
 } from './db.js'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } from './auth.js'
 import { ossConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload } from './files.js'
+import { loginRateLimiter } from './security.js'
 
 export const routes = Router()
 
@@ -94,7 +95,7 @@ function maybeSignOrder(o) {
 
 /* ==================== 登录 ==================== */
 
-routes.post('/auth/login', h((req, res) => {
+routes.post('/auth/login', loginRateLimiter(), h((req, res) => {
   const { username, password } = req.body || {}
   const acc = db.prepare('SELECT * FROM accounts WHERE username = ?').get(String(username || '').trim())
   if (!acc || !verifyPassword(password, acc.pass_hash)) return bad(res, '账号或密码错误', 401)

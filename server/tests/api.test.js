@@ -7,6 +7,7 @@ import fs from 'node:fs'
 const DB_FILE = path.join(tmpdir(), `muye-api-test-${process.pid}.db`)
 process.env.MUYE_DB_PATH = DB_FILE
 process.env.NODE_ENV = 'test'
+process.env.LOGIN_MAX_PER_MINUTE = '1000'
 
 const { createApp } = await import('../src/index.js')
 const { db, uid, now, closeDb } = await import('../src/db.js')
@@ -873,5 +874,82 @@ test('分片上传：配置 OSS 后为分片签发预签名地址', async () => 
     delete process.env.OSS_BUCKET
     delete process.env.OSS_ACCESS_KEY_ID
     delete process.env.OSS_ACCESS_KEY_SECRET
+  }
+})
+
+/* ==================== 安全中间件（P0）测试 ==================== */
+
+test('helmet 安全响应头已启用', async () => {
+  const res = await fetch(`${base}/api/health`)
+  assert.equal(res.status, 200)
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
+  assert.equal(res.headers.get('x-frame-options'), 'SAMEORIGIN')
+})
+
+test('CORS 未配置时回显请求来源（开发期）', async () => {
+  const res = await fetch(`${base}/api/health`, { headers: { Origin: 'http://localhost:3000' } })
+  assert.equal(res.headers.get('access-control-allow-origin'), 'http://localhost:3000')
+})
+
+test('CORS 配置 CORS_ORIGIN 后收紧为域名白名单', async () => {
+  const prev = process.env.CORS_ORIGIN
+  process.env.CORS_ORIGIN = 'https://demo.muye.com'
+  const app2 = createApp().listen(0)
+  try {
+    await new Promise((resolve) => app2.once('listening', resolve))
+    const base2 = `http://127.0.0.1:${app2.address().port}`
+    const res = await fetch(`${base2}/api/health`, { headers: { Origin: 'http://evil.example.com' } })
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('access-control-allow-origin'), 'https://demo.muye.com')
+  } finally {
+    await new Promise((resolve) => app2.close(resolve))
+    if (prev === undefined) delete process.env.CORS_ORIGIN
+    else process.env.CORS_ORIGIN = prev
+  }
+})
+
+test('登录限流：同一 IP 超过次数后返回 429', async () => {
+  const prev = process.env.LOGIN_MAX_PER_MINUTE
+  process.env.LOGIN_MAX_PER_MINUTE = '3'
+  const ip = '203.0.113.77'
+  try {
+    const attempt = async () => {
+      const res = await fetch(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': ip },
+        body: JSON.stringify({ username: 'mingzhou', password: 'wrong-pass' }),
+      })
+      return { status: res.status, data: await res.json() }
+    }
+    let last
+    for (let i = 0; i < 4; i++) {
+      last = await attempt()
+      if (i < 3) assert.equal(last.status, 401)
+    }
+    assert.equal(last.status, 429)
+    assert.equal(last.data.error, '登录尝试次数过多，请 1 分钟后再试')
+  } finally {
+    if (prev === undefined) delete process.env.LOGIN_MAX_PER_MINUTE
+    else process.env.LOGIN_MAX_PER_MINUTE = prev
+  }
+})
+
+test('JSON 请求体超过限制返回 413', async () => {
+  const prev = process.env.JSON_BODY_LIMIT
+  process.env.JSON_BODY_LIMIT = '1kb'
+  const app3 = createApp().listen(0)
+  try {
+    await new Promise((resolve) => app3.once('listening', resolve))
+    const base3 = `http://127.0.0.1:${app3.address().port}`
+    const res = await fetch(`${base3}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'x'.repeat(4000), password: 'y' }),
+    })
+    assert.equal(res.status, 413)
+  } finally {
+    await new Promise((resolve) => app3.close(resolve))
+    if (prev === undefined) delete process.env.JSON_BODY_LIMIT
+    else process.env.JSON_BODY_LIMIT = prev
   }
 })

@@ -1,6 +1,7 @@
 // 木叶设计平台后端 —— 入口
 // 启动：npm start（默认端口 3001，可用环境变量 PORT 覆盖）
 import express from 'express'
+import helmet from 'helmet'
 import { routes } from './routes.js'
 
 const PORT = process.env.PORT || 3001
@@ -8,12 +9,21 @@ const PORT = process.env.PORT || 3001
 export function createApp() {
   const app = express()
 
-  // 口扫文件目前以 dataUrl 内嵌在 JSON 里传输，限制放宽到 100MB（上线第 2 步改为对象存储后可调回）
-  app.use(express.json({ limit: '100mb' }))
+  // 信任 nginx 反代：登录限流按 X-Forwarded-For 取客户端真实 IP（单层反代用 1，多层可用 TRUST_PROXY 覆盖）
+  app.set('trust proxy', Number(process.env.TRUST_PROXY ?? 1))
 
-  // 开发期允许前端 Vite 开发服务器（:3000）跨域调用；上线后同源部署可删除此段
+  // 全局安全响应头（helmet：X-Content-Type-Options / X-Frame-Options / HSTS / 隐藏 X-Powered-By 等）
+  app.use(helmet())
+
+  // JSON 请求体限制：默认 10mb。小文件（≤1.5MB）以 dataUrl 内嵌（base64 后约 2MB），
+  // 大文件已全部走 OSS 直传，JSON 不再承载百兆数据；特殊场景可用 JSON_BODY_LIMIT 覆盖
+  app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '10mb' }))
+
+  // CORS：开发期默认放行任意来源；生产用 CORS_ORIGIN 收紧为域名白名单
+  // （nginx 同源反代 /api 其实不跨域，此配置主要给「前端域名 ≠ 后端域名」的部署兜底）
+  const corsOrigin = process.env.CORS_ORIGIN
   app.use((req, res, next) => {
-    res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*')
+    res.setHeader('Access-Control-Allow-Origin', corsOrigin || req.headers.origin || '*')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PATCH,DELETE,OPTIONS')
     if (req.method === 'OPTIONS') return res.sendStatus(204)

@@ -32,15 +32,38 @@ export function isBackendMode(): boolean {
   return true
 }
 
+/** API 请求超时（毫秒）：网络卡住时不让界面一直等待，默认 20s */
+export const API_TIMEOUT_MS = 20_000
+
+/** 带超时的 fetch：超时后中止并抛出「请求超时」错误（大文件 OSS 直传不走这里） */
+export async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(new Error('请求超时')), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+function isTimeoutError(e: unknown): boolean {
+  return e instanceof Error && (e.name === 'AbortError' || e.message === '请求超时')
+}
 export async function apiFetch<T>(path: string, options: { method?: string; token?: string; body?: unknown } = {}): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: options.method ?? 'GET',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
-    },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  })
+  let response: Response
+  try {
+    response = await fetchWithTimeout(`${API_BASE}${path}`, {
+      method: options.method ?? 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.token ? { Authorization: `Bearer ${options.token}` } : {}),
+      },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    })
+  } catch (e) {
+    if (isTimeoutError(e)) throw new Error('请求超时，请检查网络后重试')
+    throw e
+  }
   const data = await response.json().catch(() => null)
   if (!response.ok) {
     throw new Error(data?.error || `请求失败（${response.status}）`)

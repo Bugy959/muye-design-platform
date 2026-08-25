@@ -88,6 +88,8 @@ npm start          # 启动，默认 http://localhost:3001
 | `OSS_ACCESS_KEY_ID` | AccessKey ID |
 | `OSS_ACCESS_KEY_SECRET` | AccessKey Secret |
 
+> 安全相关环境变量：`CORS_ORIGIN`（跨域白名单，生产必设）、`LOGIN_MAX_PER_MINUTE`（登录限流，默认 5）、`TRUST_PROXY`（nginx 反代层数，默认 1）、`JSON_BODY_LIMIT`（请求体上限，默认 10mb）。
+
 
 - 所有写操作校验登录与角色；医院只能动自己的订单，设计师只能接匹配范围内的单
 - 积分增减全部在数据库事务内完成，余额不足直接回滚，不可能扣成负数（管理端扣减也拦）
@@ -99,4 +101,4 @@ npm start          # 启动，默认 http://localhost:3001
 1. ~~口扫文件/照片改传对象存储（OSS/COS）~~ ✅ 代码已实现（2026-08-23），待配置 OSS 环境变量后启用
 2. HTTPS + 域名 + ICP 备案
 3. 数据库每日自动备份
-4. CORS 改为只允许正式域名
+4. ~~CORS 收紧~~ ✅ 已实现（2026-08-25）：设 `CORS_ORIGIN` 环境变量即可；另已内置登录限流（`LOGIN_MAX_PER_MINUTE`，默认 5 次/分钟）、helmet 安全头、JSON 限制 10mb（`JSON_BODY_LIMIT` 可覆盖）
