@@ -1,23 +1,18 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Designer, Order, OrderFile } from '@/types'
-import { acceptOrderAsync, designerAlias, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
+import { acceptOrderAsync, designerAlias, downloadFileNow, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
 import { toast } from 'sonner'
 import { ToothChartMini } from '@/components/ToothChart'
 import { EmptyState, FileChip, ImageThumb, SectionHead, StatusPill, btnGhost, btnPrimary, inputCls } from '@/components/bits'
 import { ARCH_LABELS, DESIGN_TYPES } from '@/types'
 import { cn } from '@/lib/utils'
 
-/** 一键下载订单的全部扫描文件与照片（仅演示版已保存内容的文件可下） */
-function downloadAll(files: { name: string; dataUrl?: string; url?: string }[], images: { name: string; dataUrl?: string; url?: string }[]) {
-  const items = [...files, ...images].filter((f) => f.dataUrl || f.url)
-  items.forEach((f, i) =>
-    setTimeout(() => {
-      const a = document.createElement('a')
-      if (f.url) { a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer' }
-      else if (f.dataUrl) { a.href = f.dataUrl; a.download = f.name }
-      a.click()
-    }, i * 150),
-  )
+/** 一键下载订单的全部扫描文件与照片（2.7：逐个实时签名下载） */
+async function downloadAll(files: { name: string; dataUrl?: string; key?: string; url?: string }[], images: { name: string; dataUrl?: string; key?: string; url?: string }[]) {
+  const items = [...files, ...images].filter((f) => f.dataUrl || f.key)
+  for (const f of items) {
+    try { await downloadFileNow(f) } catch { /* 单个失败不影响其余 */ }
+  }
   return items.length
 }
 
@@ -267,8 +262,8 @@ function PoolCard({ order: o, designerId, onAccepted }: { order: Order; designer
             <button
               type="button"
               className="rounded-full border border-brand px-3.5 py-1 text-[12.5px] font-medium text-brand transition-colors hover:bg-brand hover:text-stone-50 disabled:pointer-events-none disabled:opacity-40"
-              disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url)}
-              title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
+              disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.key)}
+              title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.key) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
               onClick={(e) => { e.stopPropagation(); downloadAll(o.scanFiles, o.images) }}
             >
               ↓ 全部下载（文件 {o.scanFiles.length} + 照片 {o.images.length}）
@@ -287,11 +282,21 @@ function MineRow({ order: o }: { order: Order }) {
   const [files, setFiles] = useState<OrderFile[]>([])
   const [picking, setPicking] = useState(false)
   const [open, setOpen] = useState(false)
+  const [up, setUp] = useState<Record<string, number>>({})
   const fileRef = useRef<HTMLInputElement>(null)
+  const progKey = (name: string, size: number) => `${name}-${size}`
 
   const pick = async (list: FileList | null) => {
     if (!list) return
-    const picked = await Promise.all(Array.from(list).map((f) => readOrderFile(f)))
+    const picked = await Promise.all(Array.from(list).map(async (f) => {
+      const key = progKey(f.name, f.size)
+      setUp((prev) => ({ ...prev, [key]: 0 }))
+      try {
+        return await readOrderFile(f, (p) => setUp((prev) => ({ ...prev, [key]: p.percent })))
+      } finally {
+        setUp((prev) => { const next = { ...prev }; delete next[key]; return next })
+      }
+    }))
     setFiles((prev) => [...prev, ...picked].slice(0, 6))
   }
   const startPicking = (e: React.MouseEvent) => {
@@ -375,8 +380,8 @@ function MineRow({ order: o }: { order: Order }) {
               <button
                 type="button"
                 className="rounded-full border border-brand px-3 py-0.5 text-[12px] font-medium text-brand transition-colors hover:bg-brand hover:text-stone-50 disabled:pointer-events-none disabled:opacity-40"
-                disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url)}
-                title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.url) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
+                disabled={![...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.key)}
+                title={[...o.scanFiles, ...o.images].some((f) => f.dataUrl || f.key) ? '依次下载全部扫描文件与照片' : '演示订单未保存文件内容，真实上传的文件可一键下载'}
                 onClick={() => downloadAll(o.scanFiles, o.images)}
               >
                 ↓ 全部下载（文件 {o.scanFiles.length} + 照片 {o.images.length}）
@@ -399,12 +404,16 @@ function MineRow({ order: o }: { order: Order }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <input ref={fileRef} type="file" multiple className="hidden" onChange={(e) => void pick(e.target.files)} />
                   <button className={btnGhost} onClick={() => fileRef.current?.click()}>选择设计文件</button>
-                  {files.map((f, i) => (
+                  {files.map((f, i) => {
+                    const prog = f.size ? up[progKey(f.name, f.size)] : undefined
+                    return (
                     <span key={i} className="inline-flex items-center gap-1 rounded-full bg-stone-100 px-2.5 py-1 font-mono text-[12.5px] text-stone-600">
                       {f.name}
+                      {prog !== undefined && <span className="text-[11px] tabular-nums text-brand">{prog}%</span>}
                       <button className="text-stone-400 hover:text-stone-700" onClick={() => setFiles((prev) => prev.filter((_, x) => x !== i))}>×</button>
                     </span>
-                  ))}
+                    )
+                  })}
                   <button
                     className={btnPrimary}
                     disabled={files.length === 0}

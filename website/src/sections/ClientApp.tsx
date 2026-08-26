@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Arch, Client, DesignType, Order, OrderFile, OrderImage, ReworkRequest, ToothCode } from '@/types'
 import { ARCH_LABELS, DESIGN_TYPES, MALONG_POINTS, URGENT_POINTS_PER_TOOTH } from '@/types'
-import { cancelOrder, cancelReworkRequest, createOrderAsync, createReworkRequest, designerAlias, getClientReworks, isFileTooLarge, markNoticeRead, orderCount, orderPoints, orderStats, readOrderFile, resubmitOrder, searchOrders, updateReworkRequest, useDB } from '@/lib/store'
+import { cancelOrder, cancelReworkRequest, createOrderAsync, createReworkRequest, downloadFileNow, designerAlias, getClientReworks, isFileTooLarge, markNoticeRead, orderCount, orderPoints, orderStats, readOrderFile, resubmitOrder, searchOrders, updateReworkRequest, useDB } from '@/lib/store'
 import { ToothChart, ToothChartMini } from '@/components/ToothChart'
 import { EmptyState, Field, FileChip, ImageThumb, OrderTimeline, SectionHead, SortBar, StatusPill, TeethInline, btnGhost, btnPrimary, inputCls } from '@/components/bits'
 import { fmtSize, sortOrders } from '@/lib/order-utils'
@@ -862,13 +862,13 @@ function OrderList({ orders, clientId }: { orders: Order[]; clientId: string }) 
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-stone-400">设计文件</span>
                           {o.designFiles.map((f, i) => <FileChip key={i} file={f} />)}
-                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.designFiles.filter((f) => f.dataUrl || f.url).forEach((f) => { const a = document.createElement('a'); if (f.url) { a.href = f.url; a.target = '_blank'; a.rel = 'noreferrer' } else { a.href = f.dataUrl!; a.download = f.name } a.click() })}>批量下载文件</button>
+                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.designFiles.filter((f) => f.dataUrl || f.key).forEach((f) => { void downloadFileNow(f).catch(() => {}) })}>批量下载文件</button>
                         </div>
                       )}
                       {o.images.length > 0 && (
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-stone-400">照片</span>
-                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.images.filter((img) => img.dataUrl || img.url).forEach((img) => { const a = document.createElement('a'); if (img.url) { a.href = img.url; a.target = '_blank'; a.rel = 'noreferrer' } else { a.href = img.dataUrl!; a.download = img.name } a.click() })}>批量下载照片</button>
+                          <button type="button" className="rounded-full border border-stone-300 bg-white px-3 py-1 text-[12.5px] text-stone-600 hover:border-stone-500" onClick={() => o.images.filter((img) => img.dataUrl || img.key).forEach((img) => { void downloadFileNow(img).catch(() => {}) })}>批量下载照片</button>
                         </div>
                       )}
                       {reworkFor === o.id ? (

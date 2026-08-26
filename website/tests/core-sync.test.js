@@ -468,7 +468,7 @@ test('uploadOrderFile: 分片中途失败保留检查点，可在下次续传', 
   globalThis.fetch = async (url, opts = {}) => {
     if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
       partPuts += 1
-      if (partPuts === 2) return { ok: false, status: 500, json: async () => ({}) } // 第 2 个分片失败
+      if (partPuts > 1) return { ok: false, status: 500, json: async () => ({}) } // 第 2 个分片起持续失败（含重试），验证整体失败
       return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts) }), json: async () => ({}) }
     }
     return originalFetch(url, opts)
@@ -498,6 +498,88 @@ test('readOrderFile: 大文件 OSS 直传时透传进度回调', async () => {
     const f = await store.readOrderFile({ name: 'p.stl', size: 2 * 1024 * 1024 }, (p) => { last = p.percent })
     assert.deepEqual(f, { name: 'p.stl', key: 'uploads/2026-08-23/p.stl', size: 2 * 1024 * 1024 })
     assert.equal(last, 100)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+test('refreshFileUrl: 通过后端重新签发实时下载地址（2.7）', async () => {
+  calls.length = 0
+  fetchImpl = (url) => (url.endsWith('/files/download-url') ? json(200, { url: 'https://oss.example/signed?v=2' }) : json(404, {}))
+  const url = await store.refreshFileUrl({ key: 'uploads/x/a.stl' })
+  assert.equal(url, 'https://oss.example/signed?v=2')
+  assert.ok(calls.some((c) => c.url.endsWith('/files/download-url') && c.method === 'POST'))
+})
+
+test('uploadOrderFile: complete 失败（uploadId 失效）时清检查点重新 init 整传（2.5）', async () => {
+  calls.length = 0
+  const size = 51 * 1024 * 1024
+  const parts = Math.ceil(size / (5 * 1024 * 1024)) // 11
+  let inits = 0
+  let completes = 0
+  let partPuts = 0
+  const etagFor = (n) => `"${String(n).padStart(32, '0')}"`
+  fetchImpl = (url, opts = {}) => {
+    if (url.endsWith('/files/upload-init')) { inits += 1; return json(200, { key: `uploads/2026-08-24/big-${inits}.stl`, uploadId: `uid-${inits}` }) }
+    if (url.endsWith('/files/upload-part-url')) return json(200, { uploadUrl: 'https://oss.example/part' })
+    if (url.endsWith('/files/upload-complete')) {
+      completes += 1
+      if (completes === 1) return json(500, { error: 'NoSuchUpload（分片 uploadId 已失效）' })
+      return json(200, { ok: true })
+    }
+    return json(404, {})
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
+      partPuts += 1
+      return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts) }), json: async () => ({}) }
+    }
+    return originalFetch(url, opts)
+  }
+  try {
+    const file = new File([new Uint8Array(size)], 'big.stl', { lastModified: 111 })
+    const f = await store.uploadOrderFile(file)
+    assert.ok(f.key.endsWith('big-2.stl'))
+    assert.equal(inits, 2)             // 重新 init 一次
+    assert.equal(completes, 2)         // 第一次失效失败，第二次成功
+    assert.equal(partPuts, parts * 2)  // 两轮各传一遍
+    assert.equal(globalThis.localStorage.getItem(`muye-upload-${size}-111-big.stl`), null)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+test('uploadOrderFile: 分片 PUT 瞬时失败自动重试后成功（2.5）', async () => {
+  calls.length = 0
+  const size = 51 * 1024 * 1024
+  const parts = Math.ceil(size / (5 * 1024 * 1024)) // 11
+  let partPuts = 0
+
+  let retried = false
+  const etagFor = (n) => `"${String(n).padStart(32, '0')}"`
+  fetchImpl = (url) => {
+    if (url.endsWith('/files/upload-init')) return json(200, { key: 'uploads/2026-08-24/big.stl', uploadId: 'uid-1' })
+    if (url.endsWith('/files/upload-part-url')) return json(200, { uploadUrl: 'https://oss.example/part' })
+    if (url.endsWith('/files/upload-complete')) return json(200, { ok: true })
+    return json(404, {})
+  }
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, opts = {}) => {
+    if (String(url) === 'https://oss.example/part' && opts.method === 'PUT') {
+      partPuts += 1
+
+      if (partPuts === 2) { retried = true; return { ok: false, status: 500, json: async () => ({}) } } // 只失败一次
+      return { ok: true, status: 200, headers: new Headers({ ETag: etagFor(partPuts) }), json: async () => ({}) }
+    }
+    return originalFetch(url, opts)
+  }
+  try {
+    const file = new File([new Uint8Array(size)], 'big.stl', { lastModified: 222 })
+    const f = await store.uploadOrderFile(file)
+    assert.ok(retried, '第 2 个分片应先失败一次')
+    assert.deepEqual(f, { name: 'big.stl', key: 'uploads/2026-08-24/big.stl', size })
+
+    assert.ok(partPuts >= parts + 1, '至少重试 1 次（实际 ' + partPuts + ' 次 PUT）') // 11 片 + 至少 1 次重试（并发时序不锁定精确次数）
+    assert.equal(globalThis.localStorage.getItem(`muye-upload-${size}-222-big.stl`), null)
   } finally {
     globalThis.fetch = originalFetch
   }

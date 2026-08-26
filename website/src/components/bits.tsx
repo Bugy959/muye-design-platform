@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import type { OrderSort } from '@/lib/order-utils'
 import type { DesignType, Order, OrderStatus, ToothCode } from '@/types'
 import { ARCH_LABELS, DESIGN_TYPES, ORDER_STATUS, toothLabel, toothSort } from '@/types'
+import { downloadFileNow, refreshFileUrl } from '@/lib/store'
 
 /* 状态徽章 —— 纸面柔色块（B版），语义色 */
 const PILL: Record<string, string> = {
@@ -103,20 +104,20 @@ export const btnGhost =
   'inline-flex min-h-[44px] items-center justify-center gap-2 rounded border border-stone-300 bg-white px-4 py-2 text-[15px] font-medium text-stone-700 transition-colors duration-150 hover:border-stone-500 hover:text-stone-900 active:scale-[0.98]'
 
 /* 可下载文件标签：有内容可直接下载；演示版大文件仅记录文件名 */
-export function FileChip({ file, tone = 'green' }: { file: { name: string; dataUrl?: string; url?: string }; tone?: 'green' | 'stone' }) {
+export function FileChip({ file, tone = 'green' }: { file: { name: string; dataUrl?: string; key?: string; url?: string }; tone?: 'green' | 'stone' }) {
   const cls = tone === 'green'
     ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
     : 'border-stone-300 bg-stone-50 text-stone-600'
-  if (file.dataUrl || file.url) {
+  if (file.dataUrl || file.key) {
     return (
-      <a
-        href={file.dataUrl || file.url}
-        {...(file.dataUrl ? { download: file.name } : { target: '_blank', rel: 'noreferrer' })}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); void downloadFileNow(file).catch(() => {}) }}
         className={cn('inline-flex items-center gap-1.5 rounded-sm border px-3 py-1 font-mono text-[13.5px] transition-colors duration-150 hover:brightness-95', cls)}
-        title="点击下载"
+        title="点击下载（实时签名）"
       >
         ↓ {file.name}
-      </a>
+      </button>
     )
   }
   return (
@@ -159,12 +160,20 @@ export function OrderScope({ order: o }: { order: Order }) {
 }
 
 /* 照片缩略图：点击放大（Lightbox），放大后可下载 */
-export function ImageThumb({ img, size = 'h-14 w-14' }: { img: { name: string; dataUrl?: string; url?: string }; size?: string }) {
+export function ImageThumb({ img, size = 'h-14 w-14' }: { img: { name: string; dataUrl?: string; key?: string; url?: string }; size?: string }) {
   const [open, setOpen] = useState(false)
-  const src = img.dataUrl || img.url
+  const [fresh, setFresh] = useState<string | undefined>()
+  const src = fresh ?? img.dataUrl ?? img.url
+  const openPreview = () => {
+    setOpen(true)
+    // 2.7：点开预览时实时重新签名，避免 bootstrap 旧签名过期 403
+    if (img.key && !fresh) {
+      void refreshFileUrl(img).then((u) => { if (u) setFresh(u) }).catch(() => {})
+    }
+  }
   return (
     <>
-      <button type="button" className={cn('overflow-hidden rounded border border-stone-300 bg-stone-100', size)} onClick={() => setOpen(true)} title="点击放大">
+      <button type="button" className={cn('overflow-hidden rounded border border-stone-300 bg-stone-100', size)} onClick={openPreview} title="点击放大">
         {src
           ? <img src={src} alt={img.name} className="h-full w-full object-cover" />
           : <span className="flex h-full w-full items-center justify-center overflow-hidden break-all px-0.5 text-center font-mono text-[9px] leading-tight text-stone-400">{img.name}</span>}
@@ -176,8 +185,7 @@ export function ImageThumb({ img, size = 'h-14 w-14' }: { img: { name: string; d
               ? <img src={src} alt={img.name} className="max-h-[85vh] max-w-[90vw] object-contain" />
               : <div className="bg-white px-10 py-8 font-mono text-[14px] text-stone-500">{img.name}（演示版未保存图片内容）</div>}
             <div className="mt-3 flex justify-center gap-3">
-              {img.dataUrl && <a href={img.dataUrl} download={img.name} className="rounded-full bg-white px-4 py-1.5 text-[14px] text-stone-700 hover:bg-stone-100">下载照片</a>}
-              {img.url && <a href={img.url} target="_blank" rel="noreferrer" className="rounded-full bg-white px-4 py-1.5 text-[14px] text-stone-700 hover:bg-stone-100">下载照片</a>}
+              <button type="button" className="rounded-full bg-white px-4 py-1.5 text-[14px] text-stone-700 hover:bg-stone-100" onClick={() => void downloadFileNow(img).catch(() => {})}>下载照片</button>
               <button type="button" className="rounded-full bg-white/20 px-4 py-1.5 text-[14px] text-white" onClick={() => setOpen(false)}>关闭</button>
             </div>
           </div>

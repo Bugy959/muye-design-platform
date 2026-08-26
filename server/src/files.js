@@ -7,6 +7,7 @@
 // 文档：仓库根目录《服务器部署详细指南.md》第 12 章
 import OSS from 'ali-oss'
 import crypto from 'node:crypto'
+import { db, now } from './db.js'
 
 /** 单文件上限（与前端约定一致）：1GB */
 export const MAX_FILE_SIZE = 1024 * 1024 * 1024
@@ -34,7 +35,7 @@ function oss() {
   if (!cfg.bucket || !cfg.accessKeyId || !cfg.accessKeySecret) {
     client = null
     clientCfg = null
-    throw Object.assign(new Error('未配置 OSS 环境变量（OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET）'), { expose: true })
+    throw Object.assign(new Error('未配置 OSS 环境变量（OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET）'), { expose: true, status: 503 })
   }
   if (!client || !clientCfg || clientCfg.region !== cfg.region || clientCfg.bucket !== cfg.bucket ||
       clientCfg.accessKeyId !== cfg.accessKeyId || clientCfg.accessKeySecret !== cfg.accessKeySecret) {
@@ -105,4 +106,62 @@ export async function completeMultipartUpload(key, uploadId, parts) {
 /** 把 key 换成短期可下载地址（私有桶必须签名，否则一律 403） */
 export function getDownloadUrl(key, expires = DOWNLOAD_PRESIGN_TTL) {
   return oss().signatureUrl(key, { expires })
+}
+/* ---------------- 上传登记与孤儿回收（V2.10 第二轮：1.8） ----------------
+ * uploads 表：upload-token / upload-init 时登记，upload-complete 标记完成；
+ * 归属校验防「A 用户补完 B 用户的分片 / 任意 key 签名」；孤儿记录定期回收。 */
+
+/** 上传登记（单次直传用 uploadId=key；分片用 OSS multipart uploadId） */
+export function registerUpload(accountId, key, uploadId) {
+  db.prepare(`INSERT INTO uploads (key, account_id, upload_id, status, created_at) VALUES (?,?,?,'uploading',?)
+             ON CONFLICT(key) DO UPDATE SET account_id = excluded.account_id, upload_id = excluded.upload_id, status = excluded.status, completed_at = NULL`)
+    .run(key, String(accountId), String(uploadId), now())
+}
+
+/** 校验 key+uploadId 归属当前账号；不通过抛 expose 错误（→ 403） */
+export function assertUploadOwner(accountId, key, uploadId) {
+  const r = db.prepare(`SELECT key FROM uploads WHERE key = ? AND account_id = ? AND upload_id = ?`).get(key, String(accountId), String(uploadId))
+  if (!r) throw Object.assign(new Error('上传凭据不属于当前账号或已失效'), { expose: true, status: 403 })
+}
+
+/** 分片合并成功后标记完成 */
+export function markUploadComplete(accountId, key, uploadId) {
+  assertUploadOwner(accountId, key, uploadId)
+  db.prepare(`UPDATE uploads SET status = 'complete', completed_at = ? WHERE key = ?`).run(now(), key)
+}
+
+/** key 是否已被任一订单引用（扫描文件/照片/设计文件 JSON 含该 key） */
+function uploadBoundToOrder(key) {
+  const esc = String(key).replace(/'/g, "''")
+  const r = db.prepare(`SELECT 1 FROM orders WHERE scan_files LIKE '%"${esc}"%' OR images LIKE '%"${esc}"%' OR design_files LIKE '%"${esc}"%' LIMIT 1`).get()
+  return !!r
+}
+
+/** 本地时间格式的「N 小时前」字符串，与 now() 同格式可比较 */
+function localIsoAgo(hours) {
+  const d = new Date(Date.now() - hours * 3600 * 1000)
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
+}
+
+/** 孤儿回收：删除「创建超过 maxAgeHours、仍未 complete、且未被订单引用」的上传记录。
+ *  OSS 对象删除默认关闭（交给桶生命周期规则兜底），显式设置 OSS_ENABLE_CLEANUP=true 才执行。
+ *  每分钟最多跑一次（force 可绕过，供测试/启动时用）。返回删除条数。 */
+let lastSweepAt = 0
+export function sweepExpiredUploads({ maxAgeHours = 24, force = false, createdBefore } = {}) {
+  const nowMs = Date.now()
+  if (!force && nowMs - lastSweepAt < 60_000) return 0
+  const cutoff = createdBefore ?? localIsoAgo(maxAgeHours)
+  const rows = db.prepare(`SELECT key FROM uploads WHERE status = 'uploading' AND created_at < ?`).all(cutoff)
+  let deleted = 0
+  for (const r of rows) {
+    if (uploadBoundToOrder(r.key)) continue
+    db.prepare(`DELETE FROM uploads WHERE key = ?`).run(r.key)
+    deleted += 1
+    if (process.env.OSS_ENABLE_CLEANUP === 'true' && ossConfigured()) {
+      try { oss().delete(r.key) } catch { /* 删除失败交给桶生命周期规则兜底 */ }
+    }
+  }
+  lastSweepAt = nowMs
+  return deleted
 }

@@ -204,6 +204,9 @@ export const apiUploadPartUrl = (token: string, key: string, uploadId: string, p
 export const apiUploadComplete = (token: string, key: string, uploadId: string, parts: { number: number; etag: string }[]) =>
   apiFetch<{ ok: boolean }>('/files/upload-complete', { method: 'POST', token, body: { key, uploadId, parts } })
 
+/** 下载链接实时签名（1.13）：点击下载时后端校验归属并重新签发，页面挂久不再 403 */
+export const apiGetDownloadUrl = (token: string, key: string) =>
+  apiFetch<{ url: string }>('/files/download-url', { method: 'POST', token, body: { key } })
 /** 上传一个分片（Blob），返回 OSS 返回的 ETag（需 OSS CORS 的 ExposeHeaders 包含 ETag） */
 export async function apiUploadPart(uploadUrl: string, blob: Blob): Promise<string> {
   const response = await fetch(uploadUrl, {

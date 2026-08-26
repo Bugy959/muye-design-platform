@@ -13,6 +13,7 @@ mkdirSync(DATA_DIR, { recursive: true })
 export const db = new DatabaseSync(process.env.MUYE_DB_PATH || path.join(DATA_DIR, 'muye.db'))
 db.exec('PRAGMA journal_mode = WAL')
 db.exec('PRAGMA foreign_keys = ON')
+db.exec(`PRAGMA busy_timeout = ${Number(process.env.DB_BUSY_TIMEOUT || 5000)}`)
 db.exec(readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'))
 
 /* ---------------- 通用小工具 ---------------- */
@@ -46,9 +47,37 @@ export function nextSeq() {
   return seq
 }
 
+
 export function closeDb() {
   db.close()
 }
+
+/* ---------------- schema 版本迁移（meta.schema_version 记录，幂等） ----------------
+ * V2.10 第二轮（2026-08-25）：新增 uploads 表 + 复合索引 + 会话过期索引。
+ * 以后加列/建表都走「版本号 + 增量迁移」，不再直接改 schema.sql 草率上线。 */
+function migrate() {
+  const row = db.prepare(`SELECT value FROM meta WHERE key = 'schema_version'`).get()
+  const v = row ? parseInt(row.value, 10) : 0
+  if (v < 2) {
+    tx(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS uploads (
+          key TEXT PRIMARY KEY, account_id TEXT NOT NULL, upload_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading','complete')),
+          created_at TEXT NOT NULL, completed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_uploads_status_created ON uploads(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_uploads_account ON uploads(account_id);
+        CREATE INDEX IF NOT EXISTS idx_notices_client_read ON notices(client_id, is_read);
+        CREATE INDEX IF NOT EXISTS idx_orders_client_created ON orders(client_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_txns_client_created ON point_txns(client_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+      `)
+      db.prepare(`INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '2')`).run()
+    })
+  }
+}
+migrate()
 
 /* ---------------- 行 → 前端驼峰对象 ---------------- */
 

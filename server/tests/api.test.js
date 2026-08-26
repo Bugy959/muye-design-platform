@@ -12,6 +12,8 @@ process.env.LOGIN_MAX_PER_MINUTE = '1000'
 const { createApp } = await import('../src/index.js')
 const { db, uid, now, closeDb } = await import('../src/db.js')
 const { hashPassword } = await import('../src/auth.js')
+const { registerUpload, sweepExpiredUploads } = await import('../src/files.js')
+const { sweepExpiredSessions } = await import('../src/maintenance.js')
 
 let server
 let base
@@ -781,7 +783,7 @@ test('文件上传凭证：参数校验与未配置 OSS 的兜底', async () => 
     token: client.token,
     body: { name: 'x.stl', size: 100 },
   })
-  assert.equal(noOss.status, 400)
+  assert.equal(noOss.status, 503)
   assert.match(noOss.data.error, /OSS/)
 })
 
@@ -837,7 +839,7 @@ test('分片上传：参数校验与未配置 OSS 的兜底', async () => {
   assert.equal(big.status, 400)
   assert.match(big.data.error, /1GB/)
   const noOss = await api('POST', '/files/upload-init', { token: client.token, body: { name: 'x.stl', size: 100 } })
-  assert.equal(noOss.status, 400)
+  assert.equal(noOss.status, 503)
   assert.match(noOss.data.error, /OSS/)
 
   // part-url：缺参 / 非法分片号（本地校验即可拦下，无需 OSS）
@@ -861,6 +863,16 @@ test('分片上传：配置 OSS 后为分片签发预签名地址', async () => 
   process.env.OSS_ACCESS_KEY_ID = 'test-key'
   process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
   try {
+    // 未登记的上传（等价于没走 upload-init）→ 归属校验拦截 403（1.8）
+    const un = await api('POST', '/files/upload-part-url', {
+      token: client.token,
+      body: { key: 'uploads/2026-08-24/x.stl', uploadId: 'upload-1', partNumber: 3 },
+    })
+    assert.equal(un.status, 403)
+
+    // 登记后（等价于 upload-init 成功）→ 正常签发
+    const { account_id: accountId } = db.prepare('SELECT account_id FROM sessions WHERE token = ?').get(client.token)
+    registerUpload(accountId, 'uploads/2026-08-24/x.stl', 'upload-1')
     const r = await api('POST', '/files/upload-part-url', {
       token: client.token,
       body: { key: 'uploads/2026-08-24/x.stl', uploadId: 'upload-1', partNumber: 3 },
@@ -952,4 +964,103 @@ test('JSON 请求体超过限制返回 413', async () => {
     if (prev === undefined) delete process.env.JSON_BODY_LIMIT
     else process.env.JSON_BODY_LIMIT = prev
   }
+})
+/* ==================== 第二轮：上传登记/孤儿回收/下载签名/会话清理 ==================== */
+
+test('上传登记与孤儿回收：未关联订单的过期上传被清理，已关联的保留（1.8）', async () => {
+  const client = await login('mingzhou', '123456')
+  const { account_id: accountId } = db.prepare('SELECT account_id FROM sessions WHERE token = ?').get(client.token)
+
+  registerUpload(accountId, 'uploads/2020/01/orphan.stl', 'orphan-upload')
+  registerUpload(accountId, 'uploads/2020/01/used.stl', 'used-upload')
+  db.prepare(`UPDATE uploads SET created_at = '2020-01-01T00:00:00' WHERE key IN ('uploads/2020/01/orphan.stl','uploads/2020/01/used.stl')`).run()
+  const created = await api('POST', '/orders', {
+    token: client.token,
+    body: {
+      type: 'quanci', urgent: false, teeth: ['11'], requirement: 'x',
+      scanFiles: [{ name: 'a.stl', key: 'uploads/2020/01/used.stl', size: 100 }],
+      images: [{ name: 'p.jpg', key: 'uploads/x/abc.jpg', size: 100 }],
+    },
+  })
+  assert.equal(created.status, 200)
+
+  const removed = sweepExpiredUploads({ force: true, createdBefore: '2025-01-01T00:00:00' })
+  assert.equal(removed, 1) // 只清孤儿，保留被订单引用的
+  assert.ok(db.prepare(`SELECT key FROM uploads WHERE key = 'uploads/2020/01/used.stl'`).get(), '已关联订单的上传记录应保留')
+  assert.equal(db.prepare(`SELECT key FROM uploads WHERE key = 'uploads/2020/01/orphan.stl'`).get(), undefined, '孤儿记录应被清理')
+})
+
+test('下载链接实时签名：按权限校验 key 归属并重新签发（1.13）', async () => {
+  const ming = await login('mingzhou', '123456')
+  const yahe = await login('yahe', '123456')
+  const admin = await login('admin', 'muye2026')
+  const designer = await login('li', '123456')
+  const key = 'uploads/2026-08-25/real-time-sign.stl'
+  process.env.OSS_REGION = 'oss-cn-hangzhou'
+  process.env.OSS_BUCKET = 'test-bucket'
+  process.env.OSS_ACCESS_KEY_ID = 'test-key'
+  process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
+  try {
+    const created = await api('POST', '/orders', {
+      token: ming.token,
+      body: {
+        type: 'quanci', urgent: false, teeth: ['11'], requirement: 'x',
+        scanFiles: [{ name: 'a.stl', key, size: 100 }],
+        images: [{ name: 'p.jpg', key: 'uploads/x/abc.jpg', size: 100 }],
+      },
+    })
+    assert.equal(created.status, 200)
+
+    const ok = (token) => api('POST', '/files/download-url', { token, body: { key } })
+    assert.equal((await ok(ming.token)).status, 200)   // 订单所属医院可以
+    assert.equal((await ok(yahe.token)).status, 403)   // 别的医院不行
+    assert.equal((await ok(admin.token)).status, 200)  // admin 可以
+    assert.equal((await ok(designer.token)).status, 200) // 接单大厅可见该 pending 订单的设计师可以
+    assert.equal((await api('POST', '/files/download-url', { token: designer.token, body: { key: 'uploads/nope/x.stl' } })).status, 403)
+    assert.equal((await api('POST', '/files/download-url', { body: { key } })).status, 401) // 未登录
+    // 校验返回的是新签名的下载地址
+    const r = await ok(ming.token)
+    assert.match(r.data.url, /test-bucket\.oss-cn-hangzhou\.aliyuncs\.com/)
+  } finally {
+    delete process.env.OSS_REGION
+    delete process.env.OSS_BUCKET
+    delete process.env.OSS_ACCESS_KEY_ID
+    delete process.env.OSS_ACCESS_KEY_SECRET
+  }
+})
+
+test('会话过期清理（1.11）：过期会话被删除，登录不受影响', async () => {
+  db.prepare(`INSERT INTO sessions (token, account_id, role, client_id, designer_id, username, created_at, expires_at)
+    VALUES ('expired-1', (SELECT id FROM accounts WHERE username='mingzhou'), 'client', 'c-mingzhou', NULL, 'mingzhou', '2020-01-01T00:00:00', '2020-01-01T00:00:00')`).run()
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE token='expired-1'`).get().n, 1)
+  const removed = sweepExpiredSessions()
+  assert.ok(removed >= 1)
+  assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM sessions WHERE token='expired-1'`).get().n, 0)
+  const client = await login('mingzhou', '123456') // 登录仍正常
+  assert.ok(client.token)
+})
+
+test('bootstrap 设计师设计参数隐私收口（1.9）', async () => {
+  db.prepare('INSERT OR IGNORE INTO design_params (id, inner_crown, occlusal_cut, proximal_cut) VALUES (?,?,?,?)')
+    .run('c-yahe', 0.05, 0.2, -0.05)
+  // d-zhao 在 B 组（只匹配 cg-nb），不应看到 yahe 的设计参数
+  const zhao = await login('zhao', '123456')
+  const zhaoData = (await api('GET', '/bootstrap', { token: zhao.token })).data
+  assert.ok(!zhaoData.designParams.some((p) => p.id === 'c-yahe'), '不匹配分组的设计师不应看到该客户的设计参数')
+
+  // d-li 在 A 组（匹配 cg-nb）；创建 mingzhou 的 pending 订单后能看到其参数，仍看不到 yahe
+  const ming = await login('mingzhou', '123456')
+  const created = await api('POST', '/orders', {
+    token: ming.token,
+    body: {
+      type: 'quanci', urgent: false, teeth: ['11'], requirement: 'x',
+      scanFiles: [{ name: 'a.stl' }], images: [{ name: 'p.jpg' }],
+    },
+  })
+  assert.equal(created.status, 200)
+  const li = await login('li', '123456')
+  const liData = (await api('GET', '/bootstrap', { token: li.token })).data
+  const liIds = liData.designParams.map((p) => p.id)
+  assert.ok(liIds.includes('c-mingzhou'), '可见订单对应客户的设计参数应返回')
+  assert.ok(!liIds.includes('c-yahe'), '不可见客户的设计参数不应返回')
 })

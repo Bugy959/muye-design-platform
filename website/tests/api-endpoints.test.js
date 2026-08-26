@@ -215,3 +215,9 @@ test('apiFetch: 网络错误原样抛出（非超时）', async () => {
     globalThis.fetch = originalFetch
   }
 })
+test('下载签名端点（1.13）', async () => {
+  const res = await expectCall(() => api.apiGetDownloadUrl(TOKEN, 'uploads/x/a.stl'), {
+    url: '/files/download-url', method: 'POST', body: { key: 'uploads/x/a.stl' },
+  })
+  assert.deepEqual(res, { ok: true })
+})

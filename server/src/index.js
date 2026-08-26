@@ -3,6 +3,8 @@
 import express from 'express'
 import helmet from 'helmet'
 import { routes } from './routes.js'
+import { sweepExpiredSessions } from './maintenance.js'
+import { sweepExpiredUploads } from './files.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -14,6 +16,17 @@ export function createApp() {
 
   // 全局安全响应头（helmet：X-Content-Type-Options / X-Frame-Options / HSTS / 隐藏 X-Powered-By 等）
   app.use(helmet())
+
+  // 请求日志（1.14）：方法/路径/状态/耗时；测试环境不输出，保持测试输出干净（不记请求体，脱敏）
+  if (process.env.NODE_ENV !== 'test') {
+    app.use((req, res, next) => {
+      const t0 = Date.now()
+      res.on('finish', () => {
+        console.log(`[muye] ${req.method} ${req.originalUrl} -> ${res.statusCode} ${Date.now() - t0}ms`)
+      })
+      next()
+    })
+  }
 
   // JSON 请求体限制：默认 10mb。小文件（≤1.5MB）以 dataUrl 内嵌（base64 后约 2MB），
   // 大文件已全部走 OSS 直传，JSON 不再承载百兆数据；特殊场景可用 JSON_BODY_LIMIT 覆盖
@@ -38,6 +51,8 @@ export function createApp() {
 }
 
 if (process.env.NODE_ENV !== 'test') {
+  sweepExpiredSessions() // 1.11：启动清理过期会话
+  sweepExpiredUploads({ force: true }) // 1.8：启动回收孤儿上传记录
   createApp().listen(PORT, () => {
     console.log(`[muye] 后端服务已启动: http://localhost:${PORT}`)
     console.log(`[muye] 健康检查: http://localhost:${PORT}/api/health`)

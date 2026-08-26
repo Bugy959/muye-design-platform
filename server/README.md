@@ -69,7 +69,7 @@ npm start          # 启动，默认 http://localhost:3001
 | POST | `/admin/clients/:id/group` | 管理 | 移动客户到分组 |
 | POST/DELETE | `/admin/assignments` | 管理 | 分组匹配规则（客户组 ↔ 设计师组） |
 | POST | `/admin/design-params` | 管理 | 保存医院设计参数 |
-| POST | `/admin/orders/:id/dispatch` | 管理 | 未分配订单重新派发 |
+| POST | `/admin/orders/:id/dispatch` | 管理 | 未分配订单重新派发 |\n| POST | `/files/download-url` | 文件 | 实时签名下载地址（按角色校验 key 归属，1.13） |
 
 
 ## 大文件上云（OSS 直传，2026-08-23）
@@ -79,7 +79,9 @@ npm start          # 启动，默认 http://localhost:3001
 - 流程：浏览器向后端 `POST /api/files/upload-token` 申请凭证 → 直接把文件 PUT 到 OSS → 订单只存文件 key → 下载时后端把 key 换成短时签名地址（bootstrap 自动处理）。
 - 大文件（>50MB）自动走**分片直传**：`/files/upload-init` → `/files/upload-part-url` → `/files/upload-complete`，浏览器逐片上传、断点续传；OSS CORS 的 ExposeHeaders 须包含 `ETag`。
 - 预签名有效期：上传 1 小时、下载 2 小时（`server/src/files.js`）。
-- 环境变量（未配置时上传接口返回 400，其余接口不受影响；`server/src/files.js`）：
+- **上传登记与孤儿回收**（2026-08-25）：upload-token/upload-init 登记 `uploads` 表，upload-part-url/upload-complete 校验 key+uploadId 归属当前账号；`sweepExpiredUploads()` 清理「超时且未关联订单」的孤儿记录（`OSS_ENABLE_CLEANUP=true` 时顺带删 OSS 对象）。
+- **下载实时签名**（2026-08-25）：`POST /api/files/download-url { key }` 按角色校验归属后重新签发，前端点击下载/预览时调用，页面挂久不再 403。
+- 环境变量（未配置时上传接口返回 503，其余接口不受影响；`server/src/files.js`）：
 
 | 变量 | 说明 |
 |---|---|
@@ -87,8 +89,10 @@ npm start          # 启动，默认 http://localhost:3001
 | `OSS_BUCKET` | 存储桶名（私有读写） |
 | `OSS_ACCESS_KEY_ID` | AccessKey ID |
 | `OSS_ACCESS_KEY_SECRET` | AccessKey Secret |
+| `DB_BUSY_TIMEOUT` | 5000 | SQLite 并发写等待毫秒（WAL 下避免偶发 SQLITE_BUSY） |
+| `OSS_ENABLE_CLEANUP` | 关 | =true 时孤儿回收顺带删除 OSS 对象（默认交给桶生命周期规则） |
 
-> 安全相关环境变量：`CORS_ORIGIN`（跨域白名单，生产必设）、`LOGIN_MAX_PER_MINUTE`（登录限流，默认 5）、`TRUST_PROXY`（nginx 反代层数，默认 1）、`JSON_BODY_LIMIT`（请求体上限，默认 10mb）。
+> 安全相关环境变量：`CORS_ORIGIN`（跨域白名单，生产必设）、`LOGIN_MAX_PER_MINUTE`（登录限流，默认 5）、`TRUST_PROXY`（nginx 反代层数，默认 1）、`JSON_BODY_LIMIT`（请求体上限，默认 10mb）、`DB_BUSY_TIMEOUT`（并发写等待，默认 5000）、`OSS_ENABLE_CLEANUP`（孤儿回收是否删 OSS 对象）。
 
 
 - 所有写操作校验登录与角色；医院只能动自己的订单，设计师只能接匹配范围内的单

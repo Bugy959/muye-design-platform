@@ -6,7 +6,7 @@ import {
   apiCreateAccount, apiCreateClientGroup, apiCreateDesignerGroup, apiCreateOrder, apiCreateRework, apiDeleteAccount,
   apiDeleteClientGroup, apiDispatchOrder, apiMarkAllNoticesRead, apiMarkNoticeRead, apiMoveClient, apiMoveDesigner,
   apiRejectRework, apiRemoveAssignment, apiResetPassword, apiResubmitOrder, apiReturnOrder, apiSaveDesignParam,
-  apiGetUploadToken, apiSubmitDesign, apiUpdateClientGroup, apiUpdateGroup, apiUpdateRework, apiUploadComplete, apiUploadFile, apiUploadInit, apiUploadPart, apiUploadPartUrl, isBackendMode,
+  apiGetDownloadUrl, apiGetUploadToken, apiSubmitDesign, apiUpdateClientGroup, apiUpdateGroup, apiUpdateRework, apiUploadComplete, apiUploadFile, apiUploadInit, apiUploadPart, apiUploadPartUrl, isBackendMode,
 } from './api.ts'
 
 const KEY = 'muye-design-platform-v5'
@@ -1010,68 +1010,141 @@ function uploadCheckpointKey(file: { name: string; size: number; lastModified?: 
   return `muye-upload-${file.size}-${file.lastModified ?? 0}-${file.name}`
 }
 
-/** 分片直传（可断点续传）：并发上传未完成分片，全部完成后合并 */
+/** 分片直传（可断点续传）：并发上传未完成分片，全部完成后合并。
+ *  2.5 健壮性：单个分片 PUT 失败重试 3 次（指数退避）；complete 阶段 uploadId 失效
+ *  （如超过 OSS 分片生命周期）时清检查点、重新 init 整个重传一次，再失败才放弃。 */
 async function uploadMultipart(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
   const token = tokenOf()
   if (!token) throw new Error('未登录')
   const total = file.size
   const partCount = Math.max(1, Math.ceil(total / PART_SIZE))
-
-  // 续传：读取本地检查点（同一文件未传完时跳过已完成分片）
   const ckKey = uploadCheckpointKey(file)
-  let ck: { key: string; uploadId: string; done: number[]; etags: Record<number, string> } | null = null
+
+  /** 一轮上传：读/建检查点 → 传未完成分片（带重试）→ 合并 */
+  const runRound = async (): Promise<OrderFile> => {
+    let ck: { key: string; uploadId: string; done: number[]; etags: Record<number, string> } | null = null
+    try {
+      const raw = localStorage.getItem(ckKey)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && parsed.key && parsed.uploadId && Array.isArray(parsed.done)) ck = parsed
+      }
+    } catch { /* 忽略损坏的检查点 */ }
+
+    if (!ck) {
+      const init = await apiUploadInit(token, file.name, total)
+      ck = { key: init.key, uploadId: init.uploadId, done: [], etags: {} }
+    }
+
+    const doneSet = new Set(ck.done)
+    const etagByPart: Map<number, string> = new Map()
+    if (ck.etags) {
+      for (const [n, etag] of Object.entries(ck.etags)) etagByPart.set(Number(n), etag)
+    }
+    const queue = Array.from({ length: partCount }, (_, i) => i + 1).filter((n) => !doneSet.has(n))
+    let cursor = 0
+    let completed = doneSet.size
+
+    const worker = async () => {
+      while (cursor < queue.length) {
+        const n = queue[cursor++]
+        const start = (n - 1) * PART_SIZE
+        const blob = file.slice(start, Math.min(start + PART_SIZE, total))
+        const { uploadUrl } = await apiUploadPartUrl(token, ck!.key, ck!.uploadId, n)
+        const etag = await uploadPartWithRetry(uploadUrl, blob)
+        etagByPart.set(n, etag)
+        doneSet.add(n)
+        completed += 1
+        onProgress?.({ uploaded: Math.min(completed * PART_SIZE, total), total, percent: Math.round((completed / partCount) * 100) })
+        // 每传完一片就写检查点，断网/刷新后可从断点续传
+        localStorage.setItem(ckKey, JSON.stringify({
+          key: ck!.key,
+          uploadId: ck!.uploadId,
+          done: [...doneSet].sort((a, b) => a - b),
+          etags: Object.fromEntries(etagByPart),
+        }))
+      }
+    }
+
+    // 分片失败时保留检查点（每个分片完成即写入），下次可断点续传
+    await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, queue.length) }, () => worker()))
+    const parts = [...etagByPart.keys()].sort((a, b) => a - b).map((n) => ({ number: n, etag: etagByPart.get(n)! }))
+    try {
+      await apiUploadComplete(token, ck.key, ck.uploadId, parts)
+    } catch (e) {
+      // 标记为「合并阶段失败」（很可能是 uploadId 失效），交给外层整传重来
+      const err = e instanceof Error ? e : new Error(String(e))
+      ;(err as Error & { completeFailed?: boolean }).completeFailed = true
+      throw err
+    }
+    localStorage.removeItem(ckKey) // 上传完成，清理检查点
+    return { name: file.name, key: ck.key, size: file.size }
+  }
+
   try {
-    const raw = localStorage.getItem(ckKey)
-    if (raw) {
-      const parsed = JSON.parse(raw)
-      if (parsed && parsed.key && parsed.uploadId && Array.isArray(parsed.done)) ck = parsed
+    return await runRound()
+  } catch (e) {
+    // 2.5：uploadId 失效兜底——清检查点、重新 init 整个重传一次
+    if ((e as Error & { completeFailed?: boolean })?.completeFailed) {
+      localStorage.removeItem(ckKey)
+      return await runRound()
     }
-  } catch { /* 忽略损坏的检查点 */ }
-
-  if (!ck) {
-    const init = await apiUploadInit(token, file.name, total)
-    ck = { key: init.key, uploadId: init.uploadId, done: [], etags: {} }
+    throw e
   }
-
-  const doneSet = new Set(ck.done)
-  const etagByPart: Map<number, string> = new Map()
-  if (ck.etags) {
-    for (const [n, etag] of Object.entries(ck.etags)) etagByPart.set(Number(n), etag)
-  }
-  const queue = Array.from({ length: partCount }, (_, i) => i + 1).filter((n) => !doneSet.has(n))
-  let cursor = 0
-  let completed = doneSet.size
-
-  const worker = async () => {
-    while (cursor < queue.length) {
-      const n = queue[cursor++]
-      const start = (n - 1) * PART_SIZE
-      const blob = file.slice(start, Math.min(start + PART_SIZE, total))
-      const { uploadUrl } = await apiUploadPartUrl(token, ck!.key, ck!.uploadId, n)
-      const etag = await apiUploadPart(uploadUrl, blob)
-      etagByPart.set(n, etag)
-      doneSet.add(n)
-      completed += 1
-      onProgress?.({ uploaded: Math.min(completed * PART_SIZE, total), total, percent: Math.round((completed / partCount) * 100) })
-      // 每传完一片就写检查点，断网/刷新后可从断点续传
-      localStorage.setItem(ckKey, JSON.stringify({
-        key: ck!.key,
-        uploadId: ck!.uploadId,
-        done: [...doneSet].sort((a, b) => a - b),
-        etags: Object.fromEntries(etagByPart),
-      }))
-    }
-  }
-
-  // 分片失败时保留检查点（每个分片完成即写入），下次可断点续传
-  await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, queue.length) }, () => worker()))
-  const parts = [...etagByPart.keys()].sort((a, b) => a - b).map((n) => ({ number: n, etag: etagByPart.get(n)! }))
-  await apiUploadComplete(token, ck.key, ck.uploadId, parts)
-  localStorage.removeItem(ckKey) // 上传完成，清理检查点
-  return { name: file.name, key: ck.key, size: file.size }
 }
 
-/**
+/** 指数退避等待 */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 单个分片 PUT：失败重试 3 次（400ms / 800ms 退避），仍失败则抛出最后一次错误 */
+async function uploadPartWithRetry(uploadUrl: string, blob: Blob): Promise<string> {
+  let lastErr: unknown
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      return await apiUploadPart(uploadUrl, blob)
+    } catch (e) {
+      lastErr = e
+      if (attempt < 3) await sleep(400 * 2 ** (attempt - 1))
+    }
+  }
+  throw lastErr
+}
+
+
+/* ---------------- 下载实时签名（2.7）：点击时后端重新签发，页面挂久不再 403 ---------------- */
+
+/** 通过后端校验并重新签发下载地址（key 归属校验在后端做） */
+export async function refreshFileUrl(file: { key?: string }): Promise<string | undefined> {
+  if (!file.key) return undefined
+  const token = tokenOf()
+  if (!token) return undefined
+  const { url } = await apiGetDownloadUrl(token, file.key)
+  return url
+}
+
+/** 下载/打开文件：有 key 走实时签名（新窗口），dataUrl 直接下载；无内容则忽略 */
+export async function downloadFileNow(file: { name: string; dataUrl?: string; key?: string }): Promise<void> {
+  let url: string | undefined = file.dataUrl
+  let asDownload = !!file.dataUrl
+  if (file.key) {
+    const fresh = await refreshFileUrl(file)
+    if (fresh) {
+      url = fresh
+      asDownload = false
+    }
+  }
+  if (!url) return
+  const a = document.createElement('a')
+  a.href = url
+  if (asDownload) a.download = file.name
+  else {
+    a.target = '_blank'
+    a.rel = 'noreferrer'
+  }
+  a.click()
+}/**
  * 上传口扫/照片到 OSS，返回订单可保存的文件对象（大文件 key 模式）。
  * ≤50MB 单次直传；>50MB 分片直传（自动断点续传）。依赖后端已配置 OSS，否则后端返回 400。
  * @param onProgress 可选，上传进度回调 { uploaded, total, percent }

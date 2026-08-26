@@ -7,8 +7,9 @@ import {
   rowToAssignment, rowToTxn, rowToNotice, rowToRework, rowToAccount, rowToParam,
 } from './db.js'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } from './auth.js'
-import { ossConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload } from './files.js'
+import { ossConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload, registerUpload, assertUploadOwner, markUploadComplete, sweepExpiredUploads } from './files.js'
 import { loginRateLimiter } from './security.js'
+import { sweepExpiredSessions } from './maintenance.js'
 
 export const routes = Router()
 
@@ -75,12 +76,12 @@ function addTxn(clientId, delta, balance, reason, orderId) {
 const h = (fn) => (req, res) => {
   try {
     Promise.resolve(fn(req, res)).catch((e) => {
-      if (e?.expose) return res.status(400).json({ error: e.message })
+      if (e?.expose) return res.status(e.status || 400).json({ error: e.message })
       console.error('[muye] API 错误:', e)
       res.status(500).json({ error: '服务器内部错误，请稍后重试' })
     })
   } catch (e) {
-    if (e?.expose) return res.status(400).json({ error: e.message })
+    if (e?.expose) return res.status(e.status || 400).json({ error: e.message })
     console.error('[muye] API 错误:', e)
     res.status(500).json({ error: '服务器内部错误，请稍后重试' })
   }
@@ -93,12 +94,40 @@ function maybeSignOrder(o) {
   return { ...o, scanFiles: sign(o.scanFiles), images: sign(o.images), designFiles: sign(o.designFiles) }
 }
 
-/* ==================== 登录 ==================== */
+/** 订单 JSON 文件列表（扫描/照片/设计稿）里是否含该 key */
+function fileKeyInOrder(key, row) {
+  const lists = [row.scan_files, row.images, row.design_files]
+  return lists.some((raw) => {
+    try { return (JSON.parse(raw || '[]')).some((f) => f && f.key === key) } catch { return false }
+  })
+}
+
+/** 下载权限校验（1.13）：admin 全部；医院只能下自己订单的文件；设计师只能下自己可见订单的文件 */
+function canAccessFile(s, key) {
+  if (s.role === 'admin') return true
+  if (s.role === 'client') {
+    return !!db.prepare('SELECT * FROM orders WHERE client_id = ?').all(s.clientId).find((r) => fileKeyInOrder(key, r))
+  }
+  const me = getDesigner(s.designerId)
+  if (!me) return false
+  const visibleGroups = matchedClientGroupIds(me.group_id)
+  return !!db.prepare('SELECT * FROM orders').all().find((r) => {
+    if (r.designer_id === s.designerId) return fileKeyInOrder(key, r)
+    if (r.status === 'pending') {
+      const client = getClient(r.client_id)
+      return !!(client?.client_group_id && visibleGroups.includes(client.client_group_id)) && fileKeyInOrder(key, r)
+    }
+    return false
+  })
+}
+
+/*/* ==================== 登录 ==================== */
 
 routes.post('/auth/login', loginRateLimiter(), h((req, res) => {
   const { username, password } = req.body || {}
   const acc = db.prepare('SELECT * FROM accounts WHERE username = ?').get(String(username || '').trim())
   if (!acc || !verifyPassword(password, acc.pass_hash)) return bad(res, '账号或密码错误', 401)
+  sweepExpiredSessions() // 1.11：顺带清理过期会话
   const token = createSession(acc)
   res.json({ token, session: { role: acc.role, clientId: acc.client_id ?? undefined, designerId: acc.designer_id ?? undefined, username: acc.username } })
 }))
@@ -112,11 +141,6 @@ routes.post('/auth/logout', requireAuth, h((req, res) => {
 
 routes.get('/bootstrap', requireAuth, h((req, res) => {
   const s = req.session
-  const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder).map(maybeSignOrder)
-  const reworks = db.prepare('SELECT * FROM rework_requests ORDER BY created_at DESC').all().map(rowToRework)
-  const txns = db.prepare('SELECT * FROM point_txns ORDER BY created_at DESC').all().map(rowToTxn)
-  const notices = db.prepare('SELECT * FROM notices ORDER BY created_at DESC').all().map(rowToNotice)
-  const params = db.prepare('SELECT * FROM design_params').all().map(rowToParam)
   const groups = db.prepare('SELECT * FROM groups').all().map(rowToGroup)
   const clientGroups = db.prepare('SELECT * FROM client_groups').all().map(rowToClientGroup)
   const assignments = db.prepare('SELECT * FROM assignments').all().map(rowToAssignment)
@@ -126,30 +150,47 @@ routes.get('/bootstrap', requireAuth, h((req, res) => {
       clients: db.prepare('SELECT * FROM clients').all().map(rowToClient),
       designers: db.prepare('SELECT * FROM designers').all().map(rowToDesigner),
       accounts: db.prepare('SELECT * FROM accounts').all().map(rowToAccount),
-      groups, clientGroups, assignments, orders, reworks, txns, notices, designParams: params,
+      groups, clientGroups, assignments,
+      orders: db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder).map(maybeSignOrder),
+      reworks: db.prepare('SELECT * FROM rework_requests ORDER BY created_at DESC').all().map(rowToRework),
+      txns: db.prepare('SELECT * FROM point_txns ORDER BY created_at DESC').all().map(rowToTxn),
+      notices: db.prepare('SELECT * FROM notices ORDER BY created_at DESC').all().map(rowToNotice),
+      designParams: db.prepare('SELECT * FROM design_params').all().map(rowToParam),
     })
   }
+
   if (s.role === 'client') {
     return res.json({
       clients: db.prepare('SELECT * FROM clients WHERE id = ?').all(s.clientId).map(rowToClient),
       designers: db.prepare('SELECT * FROM designers').all().map(rowToDesigner), // 仅用于显示设计师花名
       groups, clientGroups: [], assignments: [],
-      orders: orders.filter((o) => o.clientId === s.clientId),
-      reworks: reworks.filter((r) => r.clientId === s.clientId),
-      txns: txns.filter((t) => t.clientId === s.clientId),
-      notices: notices.filter((n) => n.clientId === s.clientId),
-      designParams: params.filter((p) => p.id === s.clientId),
+      orders: db.prepare('SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToOrder).map(maybeSignOrder),
+      reworks: db.prepare('SELECT * FROM rework_requests WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToRework),
+      txns: db.prepare('SELECT * FROM point_txns WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToTxn),
+      notices: db.prepare('SELECT * FROM notices WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToNotice),
+      designParams: db.prepare('SELECT * FROM design_params WHERE id = ?').all(s.clientId).map(rowToParam),
     })
   }
-  // designer：看不到任何积分、医院信息，只看自己相关的订单与接单大厅
+
+  // designer：看不到任何积分、医院信息，只看自己相关的订单与接单大厅（SQL 层先裁剪、后签名）
   const me = getDesigner(s.designerId)
+  const visibleGroups = me ? matchedClientGroupIds(me.group_id) : []
+  let orders
+  if (me && visibleGroups.length > 0) {
+    const ph = visibleGroups.map(() => '?').join(',')
+    orders = db.prepare(`SELECT * FROM orders WHERE designer_id = ? OR (status = 'pending' AND client_id IN (SELECT client_id FROM clients WHERE client_group_id IN (${ph}))) ORDER BY created_at DESC`)
+      .all(s.designerId, ...visibleGroups).map(rowToOrder).map(maybeSignOrder)
+  } else {
+    orders = (me ? db.prepare('SELECT * FROM orders WHERE designer_id = ? ORDER BY created_at DESC').all(s.designerId) : [])
+      .map(rowToOrder).map(maybeSignOrder)
+  }
+  const visibleClientIds = new Set(orders.map((o) => o.clientId))
   return res.json({
     clients: [], // 设计师不可见医院/加工厂信息（隐私规则）
     designers: db.prepare('SELECT * FROM designers').all().map(rowToDesigner),
     groups, clientGroups: [], assignments: [],
-    orders: orders.filter((o) => o.designerId === s.designerId || (o.status === 'pending' && orderVisibleToDesigner(o, me))),
-    reworks: [], txns: [], notices: [],
-    designParams: params, // 设计参数设计师可见（对应演示版设计师端显示参数）
+    orders, reworks: [], txns: [], notices: [],
+    designParams: db.prepare('SELECT * FROM design_params').all().map(rowToParam).filter((p) => visibleClientIds.has(p.id)), // 1.9 只返回可见订单对应客户的参数（隐私收口）
   })
 }))
 
@@ -549,6 +590,8 @@ routes.post('/files/upload-token', requireAuth, h((req, res) => {
   const { name, size } = req.body || {}
   if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
   const { key, uploadUrl } = getUploadTarget(name, size)
+  registerUpload(req.session.accountId, key, key) // 1.8：单次直传无 multipart uploadId，用 key 占位登记
+  sweepExpiredUploads()                            // 顺带回收孤儿上传（1.8，带节流）
   res.json({ key, uploadUrl })
 }))
 
@@ -558,18 +601,36 @@ routes.post('/files/upload-init', requireAuth, h(async (req, res) => {
   const { name, size } = req.body || {}
   if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
   const { key, uploadId } = await initMultipartUpload(name, size)
+  registerUpload(req.session.accountId, key, uploadId) // 1.8：登记 multipart
+  sweepExpiredUploads()
   res.json({ key, uploadId })
 }))
 
 routes.post('/files/upload-part-url', requireAuth, h((req, res) => {
   const { key, uploadId, partNumber } = req.body || {}
   if (!key || !uploadId) return bad(res, '缺少分片参数')
+  const n = Number(partNumber)
+  if (!Number.isInteger(n) || n < 1 || n > 10000) return bad(res, '分片编号不正确')
+  assertUploadOwner(req.session.accountId, key, uploadId) // 1.8：防补传他人分片 / 任意 key 签名
   res.json({ uploadUrl: getUploadPartUrl(key, uploadId, partNumber) })
 }))
 
 routes.post('/files/upload-complete', requireAuth, h(async (req, res) => {
   const { key, uploadId, parts } = req.body || {}
   if (!key || !uploadId) return bad(res, '缺少分片参数')
+  if (!Array.isArray(parts) || parts.length === 0) return bad(res, '缺少分片信息')
+  const invalid = parts.some((p) => !p || !Number.isInteger(Number(p.number)) || Number(p.number) < 1 || !/^"?[0-9a-f]{32}"?$/i.test(String(p.etag || '').trim()))
+  if (invalid) return bad(res, '分片信息不正确')
+  assertUploadOwner(req.session.accountId, key, uploadId) // 1.8：防补传他人分片
   await completeMultipartUpload(key, uploadId, parts)
+  markUploadComplete(req.session.accountId, key, uploadId) // 1.8：标记完成，避免被当孤儿回收
   res.json({ ok: true })
+}))
+
+/** 下载链接实时签名（1.13）：点击下载时校验 key 归属并重新签发，页面挂久不再 403 */
+routes.post('/files/download-url', requireAuth, h((req, res) => {
+  const key = String(req.body?.key || '').trim()
+  if (!key) return bad(res, '缺少文件 key')
+  if (!canAccessFile(req.session, key)) return bad(res, '无权访问该文件', 403)
+  res.json({ url: getDownloadUrl(key) })
 }))

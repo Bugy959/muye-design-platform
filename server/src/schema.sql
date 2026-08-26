@@ -138,3 +138,21 @@ CREATE TABLE IF NOT EXISTS design_params (
   occlusal_cut  REAL NOT NULL DEFAULT 0.1,
   proximal_cut  REAL NOT NULL DEFAULT -0.02
 );
+
+-- V2.10 第二轮（2026-08-25）：上传登记表（孤儿回收 / 上传归属校验）
+CREATE TABLE IF NOT EXISTS uploads (
+  key          TEXT PRIMARY KEY,      -- OSS 文件 key（uploads/日期/uuid.ext）
+  account_id   TEXT NOT NULL,          -- 发起上传的账号（归属校验 + 孤儿回收）
+  upload_id    TEXT NOT NULL,          -- 单次上传为 key；分片为 OSS multipart uploadId
+  status       TEXT NOT NULL DEFAULT 'uploading' CHECK (status IN ('uploading','complete')),
+  created_at   TEXT NOT NULL,
+  completed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_uploads_status_created ON uploads(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_uploads_account ON uploads(account_id);
+
+-- 第二轮：复合索引（查询裁剪）与会话过期清理索引
+CREATE INDEX IF NOT EXISTS idx_notices_client_read ON notices(client_id, is_read);
+CREATE INDEX IF NOT EXISTS idx_orders_client_created ON orders(client_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_txns_client_created ON point_txns(client_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
