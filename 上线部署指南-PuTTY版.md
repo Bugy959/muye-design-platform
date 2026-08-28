@@ -113,32 +113,15 @@ npm ci
 
 ### 2.5 配置后端环境变量（pm2 ecosystem）
 
-```bash
-nano /var/www/muye/server/ecosystem.config.js
-```
-（`nano` 是内置编辑器。把下面内容**整块粘贴**进去，把 `<你的...>` 改成真实值：）
+**仓库已自带示例配置** `server/ecosystem.config.example.js`，先复制为正式配置再编辑：
 
-```js
-module.exports = {
-  apps: [{
-    name: 'muye-server',
-    cwd: '/var/www/muye/server',
-    script: 'src/index.js',
-    instances: 1,
-    max_memory_restart: '800M',
-    env: {
-      PORT: 3001,
-      NODE_ENV: 'production',
-      CORS_ORIGIN: 'https://<你的域名.com>',
-      TRUST_PROXY: 1,
-      COS_REGION: 'ap-shanghai',
-      COS_BUCKET: '<muye-你的APPID>',
-      COS_SECRET_ID: '<你的SecretId>',
-      COS_SECRET_KEY: '<你的SecretKey>',
-    },
-  }],
-}
+```bash
+cd /var/www/muye/server
+cp ecosystem.config.example.js ecosystem.config.js
+nano ecosystem.config.js
 ```
+
+（`nano` 是内置编辑器。只需把里面的 `<你的...>` 改成真实值：`CORS_ORIGIN` 换成你的域名、`COS_BUCKET` 换成 `muye-你的APPID`、`COS_SECRET_ID / COS_SECRET_KEY` 换成腾讯云的 API 密钥。）
 
 nano 保存退出：按 `Ctrl+O` 回车保存 → `Ctrl+X` 退出。
 
