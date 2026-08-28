@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react'
 import type { Designer, Order, OrderFile } from '@/types'
-import { acceptOrderAsync, designerAlias, downloadFileNow, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
+import { acceptOrderAsync, designerAlias, downloadFileNow, isFileTooLarge, filterPoolOrders, getDesignParam, groupOf, matchedClientGroupIds, orderCount, orderStats, readOrderFile, returnOrder, submitDesign, useDB } from '@/lib/store'
 import { toast } from 'sonner'
 import { ToothChartMini } from '@/components/ToothChart'
 import { EmptyState, FileChip, ImageThumb, SectionHead, StatusPill, btnGhost, btnPrimary, inputCls } from '@/components/bits'
@@ -289,6 +289,7 @@ function MineRow({ order: o }: { order: Order }) {
   const pick = async (list: FileList | null) => {
     if (!list) return
     const picked = await Promise.all(Array.from(list).map(async (f) => {
+      if (isFileTooLarge(f, 1024)) return null // 2.6 前端预校验：超 1GB 跳过
       const key = progKey(f.name, f.size)
       setUp((prev) => ({ ...prev, [key]: 0 }))
       try {
@@ -297,7 +298,7 @@ function MineRow({ order: o }: { order: Order }) {
         setUp((prev) => { const next = { ...prev }; delete next[key]; return next })
       }
     }))
-    setFiles((prev) => [...prev, ...picked].slice(0, 6))
+    setFiles((prev) => [...prev, ...picked.filter((f): f is OrderFile => !!f)].slice(0, 6))
   }
   const startPicking = (e: React.MouseEvent) => {
     e.stopPropagation()

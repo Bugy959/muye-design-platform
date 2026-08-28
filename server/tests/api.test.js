@@ -14,6 +14,7 @@ const { db, uid, now, closeDb } = await import('../src/db.js')
 const { hashPassword } = await import('../src/auth.js')
 const { registerUpload, sweepExpiredUploads } = await import('../src/files.js')
 const { sweepExpiredSessions } = await import('../src/maintenance.js')
+const { resetUploadRate } = await import('../src/security.js')
 
 let server
 let base
@@ -759,19 +760,19 @@ test('服务器内部错误兜底：返回 500 JSON 且不泄漏堆栈', async (
   assert.match(r.data.error, /服务器内部错误/)
 })
 
-/* ==================== 大文件上传凭证（OSS 直传） ==================== */
+/* ==================== 大文件上传凭证（COS 直传） ==================== */
 
-test('文件上传凭证：参数校验与未配置 OSS 的兜底', async () => {
+test('文件上传凭证：参数校验与未配置 COS 的兜底', async () => {
   const client = await login('mingzhou', '123456')
 
   assert.equal((await api('POST', '/files/upload-token', { token: client.token, body: {} })).status, 400)
   assert.equal((await api('POST', '/files/upload-token', { token: client.token, body: { name: 'x.stl' } })).status, 400)
   assert.equal((await api('POST', '/files/upload-token', { token: client.token, body: { name: 'x.stl', size: 0 } })).status, 400)
 
-  // 确保本用例环境未配置 OSS；超过 1GB 上限在签 OSS 之前就拦截
-  delete process.env.OSS_BUCKET
-  delete process.env.OSS_ACCESS_KEY_ID
-  delete process.env.OSS_ACCESS_KEY_SECRET
+  // 确保本用例环境未配置 COS；超过 1GB 上限在签 COS 之前就拦截
+  delete process.env.COS_BUCKET
+  delete process.env.COS_SECRET_ID
+  delete process.env.COS_SECRET_KEY
   const big = await api('POST', '/files/upload-token', {
     token: client.token,
     body: { name: 'x.stl', size: 1024 * 1024 * 1024 + 1 },
@@ -784,15 +785,15 @@ test('文件上传凭证：参数校验与未配置 OSS 的兜底', async () => 
     body: { name: 'x.stl', size: 100 },
   })
   assert.equal(noOss.status, 503)
-  assert.match(noOss.data.error, /OSS/)
+  assert.match(noOss.data.error, /COS/)
 })
 
-test('文件上传凭证：配置 OSS 后签发直传地址，订单 key 文件转为签名下载地址', async () => {
+test('文件上传凭证：配置 COS 后签发直传地址，订单 key 文件转为签名下载地址', async () => {
   const client = await login('mingzhou', '123456')
-  process.env.OSS_REGION = 'oss-cn-hangzhou'
-  process.env.OSS_BUCKET = 'test-bucket'
-  process.env.OSS_ACCESS_KEY_ID = 'test-key'
-  process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
+  process.env.COS_REGION = 'ap-shanghai'
+  process.env.COS_BUCKET = 'muye-test-1250000000'
+  process.env.COS_SECRET_ID = 'test-key'
+  process.env.COS_SECRET_KEY = 'test-secret'
   try {
     const r = await api('POST', '/files/upload-token', {
       token: client.token,
@@ -801,7 +802,7 @@ test('文件上传凭证：配置 OSS 后签发直传地址，订单 key 文件�
     assert.equal(r.status, 200)
     assert.ok(r.data.key.startsWith('uploads/'))
     assert.ok(r.data.key.endsWith('.stl'))
-    assert.match(r.data.uploadUrl, /test-bucket\.oss-cn-hangzhou\.aliyuncs\.com/)
+    assert.match(r.data.uploadUrl, /muye-test-1250000000\.cos\.ap-shanghai\.myqcloud\.com/)
 
     // 订单里含 key 的文件 → bootstrap 返回签名下载地址
     const created = await api('POST', '/orders', {
@@ -815,34 +816,34 @@ test('文件上传凭证：配置 OSS 后签发直传地址，订单 key 文件�
     assert.equal(created.status, 200)
     const data = (await api('GET', '/bootstrap', { token: client.token })).data
     const order = data.orders.find((o) => o.id === created.data.order.id)
-    assert.ok(order.scanFiles[0].url.includes('test-bucket'))
-    assert.ok(order.images[0].url.includes('test-bucket'))
+    assert.ok(order.scanFiles[0].url.includes('muye-test-1250000000'))
+    assert.ok(order.images[0].url.includes('muye-test-1250000000'))
   } finally {
-    delete process.env.OSS_REGION
-    delete process.env.OSS_BUCKET
-    delete process.env.OSS_ACCESS_KEY_ID
-    delete process.env.OSS_ACCESS_KEY_SECRET
+    delete process.env.COS_REGION
+    delete process.env.COS_BUCKET
+    delete process.env.COS_SECRET_ID
+    delete process.env.COS_SECRET_KEY
   }
 })
 
 /* ==================== 大文件分片直传（multipart） ==================== */
 
-test('分片上传：参数校验与未配置 OSS 的兜底', async () => {
+test('分片上传：参数校验与未配置 COS 的兜底', async () => {
   const client = await login('mingzhou', '123456')
-  delete process.env.OSS_BUCKET
-  delete process.env.OSS_ACCESS_KEY_ID
-  delete process.env.OSS_ACCESS_KEY_SECRET
+  delete process.env.COS_BUCKET
+  delete process.env.COS_SECRET_ID
+  delete process.env.COS_SECRET_KEY
 
-  // init：缺参 / 超 1GB / 未配置 OSS
+  // init：缺参 / 超 1GB / 未配置 COS
   assert.equal((await api('POST', '/files/upload-init', { token: client.token, body: {} })).status, 400)
   const big = await api('POST', '/files/upload-init', { token: client.token, body: { name: 'x.stl', size: 1024 * 1024 * 1024 + 1 } })
   assert.equal(big.status, 400)
   assert.match(big.data.error, /1GB/)
   const noOss = await api('POST', '/files/upload-init', { token: client.token, body: { name: 'x.stl', size: 100 } })
   assert.equal(noOss.status, 503)
-  assert.match(noOss.data.error, /OSS/)
+  assert.match(noOss.data.error, /COS/)
 
-  // part-url：缺参 / 非法分片号（本地校验即可拦下，无需 OSS）
+  // part-url：缺参 / 非法分片号（本地校验即可拦下，无需 COS）
   assert.equal((await api('POST', '/files/upload-part-url', { token: client.token, body: {} })).status, 400)
   const badPart = await api('POST', '/files/upload-part-url', { token: client.token, body: { key: 'k', uploadId: 'u', partNumber: 0 } })
   assert.equal(badPart.status, 400)
@@ -856,12 +857,12 @@ test('分片上传：参数校验与未配置 OSS 的兜底', async () => {
   assert.match(badEtag.data.error, /分片信息/)
 })
 
-test('分片上传：配置 OSS 后为分片签发预签名地址', async () => {
+test('分片上传：配置 COS 后为分片签发预签名地址', async () => {
   const client = await login('mingzhou', '123456')
-  process.env.OSS_REGION = 'oss-cn-hangzhou'
-  process.env.OSS_BUCKET = 'test-bucket'
-  process.env.OSS_ACCESS_KEY_ID = 'test-key'
-  process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
+  process.env.COS_REGION = 'ap-shanghai'
+  process.env.COS_BUCKET = 'muye-test-1250000000'
+  process.env.COS_SECRET_ID = 'test-key'
+  process.env.COS_SECRET_KEY = 'test-secret'
   try {
     // 未登记的上传（等价于没走 upload-init）→ 归属校验拦截 403（1.8）
     const un = await api('POST', '/files/upload-part-url', {
@@ -878,14 +879,14 @@ test('分片上传：配置 OSS 后为分片签发预签名地址', async () => 
       body: { key: 'uploads/2026-08-24/x.stl', uploadId: 'upload-1', partNumber: 3 },
     })
     assert.equal(r.status, 200)
-    assert.match(r.data.uploadUrl, /test-bucket\.oss-cn-hangzhou\.aliyuncs\.com/)
+    assert.match(r.data.uploadUrl, /muye-test-1250000000\.cos\.ap-shanghai\.myqcloud\.com/)
     assert.match(r.data.uploadUrl, /partNumber=3/)
     assert.match(r.data.uploadUrl, /uploadId=upload-1/)
   } finally {
-    delete process.env.OSS_REGION
-    delete process.env.OSS_BUCKET
-    delete process.env.OSS_ACCESS_KEY_ID
-    delete process.env.OSS_ACCESS_KEY_SECRET
+    delete process.env.COS_REGION
+    delete process.env.COS_BUCKET
+    delete process.env.COS_SECRET_ID
+    delete process.env.COS_SECRET_KEY
   }
 })
 
@@ -996,10 +997,10 @@ test('下载链接实时签名：按权限校验 key 归属并重新签发（1.1
   const admin = await login('admin', 'muye2026')
   const designer = await login('li', '123456')
   const key = 'uploads/2026-08-25/real-time-sign.stl'
-  process.env.OSS_REGION = 'oss-cn-hangzhou'
-  process.env.OSS_BUCKET = 'test-bucket'
-  process.env.OSS_ACCESS_KEY_ID = 'test-key'
-  process.env.OSS_ACCESS_KEY_SECRET = 'test-secret'
+  process.env.COS_REGION = 'ap-shanghai'
+  process.env.COS_BUCKET = 'muye-test-1250000000'
+  process.env.COS_SECRET_ID = 'test-key'
+  process.env.COS_SECRET_KEY = 'test-secret'
   try {
     const created = await api('POST', '/orders', {
       token: ming.token,
@@ -1020,12 +1021,12 @@ test('下载链接实时签名：按权限校验 key 归属并重新签发（1.1
     assert.equal((await api('POST', '/files/download-url', { body: { key } })).status, 401) // 未登录
     // 校验返回的是新签名的下载地址
     const r = await ok(ming.token)
-    assert.match(r.data.url, /test-bucket\.oss-cn-hangzhou\.aliyuncs\.com/)
+    assert.match(r.data.url, /muye-test-1250000000\.cos\.ap-shanghai\.myqcloud\.com/)
   } finally {
-    delete process.env.OSS_REGION
-    delete process.env.OSS_BUCKET
-    delete process.env.OSS_ACCESS_KEY_ID
-    delete process.env.OSS_ACCESS_KEY_SECRET
+    delete process.env.COS_REGION
+    delete process.env.COS_BUCKET
+    delete process.env.COS_SECRET_ID
+    delete process.env.COS_SECRET_KEY
   }
 })
 
@@ -1063,4 +1064,42 @@ test('bootstrap 设计师设计参数隐私收口（1.9）', async () => {
   const liIds = liData.designParams.map((p) => p.id)
   assert.ok(liIds.includes('c-mingzhou'), '可见订单对应客户的设计参数应返回')
   assert.ok(!liIds.includes('c-yahe'), '不可见客户的设计参数不应返回')
+})
+
+/* ==================== 第三轮 A 套餐：健康检查 / 上传限流 ==================== */
+
+test('健康检查返回 db/cos 探活字段', async () => {
+  delete process.env.COS_BUCKET
+  delete process.env.COS_SECRET_ID
+  delete process.env.COS_SECRET_KEY
+  const res = await fetch(`${base}/api/health`)
+  assert.equal(res.status, 200)
+  const data = await res.json()
+  assert.equal(data.ok, true)
+  assert.equal(data.db, true)
+  assert.equal(data.cos, false) // 未配置 COS
+})
+
+test('上传接口限流：每账号每分钟超限返回 429', async () => {
+  const client = await login('mingzhou', '123456')
+  const { account_id: accountId } = db.prepare('SELECT account_id FROM sessions WHERE token = ?').get(client.token)
+  const prev = process.env.UPLOAD_MAX_PER_MINUTE
+  process.env.UPLOAD_MAX_PER_MINUTE = '2'
+  delete process.env.COS_BUCKET
+  delete process.env.COS_SECRET_ID
+  delete process.env.COS_SECRET_KEY
+  try {
+    const body = { name: 'x.stl', size: 100 }
+    const s1 = await api('POST', '/files/upload-token', { token: client.token, body })
+    const s2 = await api('POST', '/files/upload-token', { token: client.token, body })
+    const s3 = await api('POST', '/files/upload-token', { token: client.token, body })
+    assert.equal(s1.status, 503) // 未配置 COS → 503（限流计数先于 OSS 校验）
+    assert.equal(s2.status, 503)
+    assert.equal(s3.status, 429) // 第 3 次超限
+    assert.match(s3.data.error, /过于频繁/)
+  } finally {
+    if (prev === undefined) delete process.env.UPLOAD_MAX_PER_MINUTE
+    else process.env.UPLOAD_MAX_PER_MINUTE = prev
+    resetUploadRate(accountId)
+  }
 })

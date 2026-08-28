@@ -7,8 +7,8 @@ import {
   rowToAssignment, rowToTxn, rowToNotice, rowToRework, rowToAccount, rowToParam,
 } from './db.js'
 import { hashPassword, verifyPassword, createSession, destroySession, requireAuth, requireRole } from './auth.js'
-import { ossConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload, registerUpload, assertUploadOwner, markUploadComplete, sweepExpiredUploads } from './files.js'
-import { loginRateLimiter } from './security.js'
+import { cosConfigured, getDownloadUrl, getUploadTarget, initMultipartUpload, getUploadPartUrl, completeMultipartUpload, registerUpload, assertUploadOwner, markUploadComplete, sweepExpiredUploads } from './files.js'
+import { loginRateLimiter, checkUploadRate } from './security.js'
 import { sweepExpiredSessions } from './maintenance.js'
 
 export const routes = Router()
@@ -87,11 +87,15 @@ const h = (fn) => (req, res) => {
   }
 }
 const bad = (res, msg, code = 400) => res.status(code).json({ error: msg })
-/** 订单文件 key → 签名下载地址（未配置 OSS 时原样返回，保持旧行为） */
-function maybeSignOrder(o) {
-  if (!ossConfigured()) return o
-  const sign = (list) => (list || []).map((f) => (f.key ? { ...f, url: getDownloadUrl(f.key) } : f))
-  return { ...o, scanFiles: sign(o.scanFiles), images: sign(o.images), designFiles: sign(o.designFiles) }
+/** 订单文件 key → 签名下载地址（未配置 COS 时原样返回，保持旧行为） */
+async function maybeSignOrder(o) {
+  if (!cosConfigured()) return o
+  const sign = async (list) => {
+    const out = []
+    for (const f of list || []) out.push(f.key ? { ...f, url: await getDownloadUrl(f.key) } : f)
+    return out
+  }
+  return { ...o, scanFiles: await sign(o.scanFiles), images: await sign(o.images), designFiles: await sign(o.designFiles) }
 }
 
 /** 订单 JSON 文件列表（扫描/照片/设计稿）里是否含该 key */
@@ -139,7 +143,7 @@ routes.post('/auth/logout', requireAuth, h((req, res) => {
 
 /* ==================== 初始化数据（按角色过滤） ==================== */
 
-routes.get('/bootstrap', requireAuth, h((req, res) => {
+routes.get('/bootstrap', requireAuth, h(async (req, res) => {
   const s = req.session
   const groups = db.prepare('SELECT * FROM groups').all().map(rowToGroup)
   const clientGroups = db.prepare('SELECT * FROM client_groups').all().map(rowToClientGroup)
@@ -151,7 +155,7 @@ routes.get('/bootstrap', requireAuth, h((req, res) => {
       designers: db.prepare('SELECT * FROM designers').all().map(rowToDesigner),
       accounts: db.prepare('SELECT * FROM accounts').all().map(rowToAccount),
       groups, clientGroups, assignments,
-      orders: db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder).map(maybeSignOrder),
+      orders: await Promise.all(db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(rowToOrder).map(maybeSignOrder)),
       reworks: db.prepare('SELECT * FROM rework_requests ORDER BY created_at DESC').all().map(rowToRework),
       txns: db.prepare('SELECT * FROM point_txns ORDER BY created_at DESC').all().map(rowToTxn),
       notices: db.prepare('SELECT * FROM notices ORDER BY created_at DESC').all().map(rowToNotice),
@@ -164,7 +168,7 @@ routes.get('/bootstrap', requireAuth, h((req, res) => {
       clients: db.prepare('SELECT * FROM clients WHERE id = ?').all(s.clientId).map(rowToClient),
       designers: db.prepare('SELECT * FROM designers').all().map(rowToDesigner), // 仅用于显示设计师花名
       groups, clientGroups: [], assignments: [],
-      orders: db.prepare('SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToOrder).map(maybeSignOrder),
+      orders: await Promise.all(db.prepare('SELECT * FROM orders WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToOrder).map(maybeSignOrder)),
       reworks: db.prepare('SELECT * FROM rework_requests WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToRework),
       txns: db.prepare('SELECT * FROM point_txns WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToTxn),
       notices: db.prepare('SELECT * FROM notices WHERE client_id = ? ORDER BY created_at DESC').all(s.clientId).map(rowToNotice),
@@ -178,11 +182,11 @@ routes.get('/bootstrap', requireAuth, h((req, res) => {
   let orders
   if (me && visibleGroups.length > 0) {
     const ph = visibleGroups.map(() => '?').join(',')
-    orders = db.prepare(`SELECT * FROM orders WHERE designer_id = ? OR (status = 'pending' AND client_id IN (SELECT client_id FROM clients WHERE client_group_id IN (${ph}))) ORDER BY created_at DESC`)
-      .all(s.designerId, ...visibleGroups).map(rowToOrder).map(maybeSignOrder)
+    orders = await Promise.all(db.prepare(`SELECT * FROM orders WHERE designer_id = ? OR (status = 'pending' AND client_id IN (SELECT client_id FROM clients WHERE client_group_id IN (${ph}))) ORDER BY created_at DESC`)
+      .all(s.designerId, ...visibleGroups).map(rowToOrder).map(maybeSignOrder))
   } else {
-    orders = (me ? db.prepare('SELECT * FROM orders WHERE designer_id = ? ORDER BY created_at DESC').all(s.designerId) : [])
-      .map(rowToOrder).map(maybeSignOrder)
+    orders = await Promise.all((me ? db.prepare('SELECT * FROM orders WHERE designer_id = ? ORDER BY created_at DESC').all(s.designerId) : [])
+      .map(rowToOrder).map(maybeSignOrder))
   }
   const visibleClientIds = new Set(orders.map((o) => o.clientId))
   return res.json({
@@ -586,10 +590,11 @@ routes.post('/admin/orders/:id/dispatch', requireAuth, requireRole('admin'), h((
 
 /* ---- 大文件上传（OSS 直传，见《服务器部署详细指南.md》第 12 章） ---- */
 
-routes.post('/files/upload-token', requireAuth, h((req, res) => {
+routes.post('/files/upload-token', requireAuth, h(async (req, res) => {
   const { name, size } = req.body || {}
   if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
-  const { key, uploadUrl } = getUploadTarget(name, size)
+  checkUploadRate(req.session.accountId) // 防恶意刷 COS（每账号每分钟上限）
+  const { key, uploadUrl } = await getUploadTarget(name, size)
   registerUpload(req.session.accountId, key, key) // 1.8：单次直传无 multipart uploadId，用 key 占位登记
   sweepExpiredUploads()                            // 顺带回收孤儿上传（1.8，带节流）
   res.json({ key, uploadUrl })
@@ -600,19 +605,20 @@ routes.post('/files/upload-token', requireAuth, h((req, res) => {
 routes.post('/files/upload-init', requireAuth, h(async (req, res) => {
   const { name, size } = req.body || {}
   if (!name || !Number.isInteger(size) || size <= 0) return bad(res, '请提供文件名和大小')
+  checkUploadRate(req.session.accountId) // 防恶意刷 OSS（每账号每分钟上限）
   const { key, uploadId } = await initMultipartUpload(name, size)
   registerUpload(req.session.accountId, key, uploadId) // 1.8：登记 multipart
   sweepExpiredUploads()
   res.json({ key, uploadId })
 }))
 
-routes.post('/files/upload-part-url', requireAuth, h((req, res) => {
+routes.post('/files/upload-part-url', requireAuth, h(async (req, res) => {
   const { key, uploadId, partNumber } = req.body || {}
   if (!key || !uploadId) return bad(res, '缺少分片参数')
   const n = Number(partNumber)
   if (!Number.isInteger(n) || n < 1 || n > 10000) return bad(res, '分片编号不正确')
   assertUploadOwner(req.session.accountId, key, uploadId) // 1.8：防补传他人分片 / 任意 key 签名
-  res.json({ uploadUrl: getUploadPartUrl(key, uploadId, partNumber) })
+  res.json({ uploadUrl: await getUploadPartUrl(key, uploadId, partNumber) })
 }))
 
 routes.post('/files/upload-complete', requireAuth, h(async (req, res) => {
@@ -628,9 +634,9 @@ routes.post('/files/upload-complete', requireAuth, h(async (req, res) => {
 }))
 
 /** 下载链接实时签名（1.13）：点击下载时校验 key 归属并重新签发，页面挂久不再 403 */
-routes.post('/files/download-url', requireAuth, h((req, res) => {
+routes.post('/files/download-url', requireAuth, h(async (req, res) => {
   const key = String(req.body?.key || '').trim()
   if (!key) return bad(res, '缺少文件 key')
   if (!canAccessFile(req.session, key)) return bad(res, '无权访问该文件', 403)
-  res.json({ url: getDownloadUrl(key) })
+  res.json({ url: await getDownloadUrl(key) })
 }))

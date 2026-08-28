@@ -181,6 +181,7 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
   const pickScans = async (files: FileList | null) => {
     if (!files) return
     for (const f of Array.from(files)) {
+      if (isFileTooLarge(f, 1024)) { setError(`口扫文件超过 1GB 上限，已跳过：${f.name}`); continue } // 2.6 前端预校验
       const key = progKey(f.name, f.size)
       setScanFiles((prev) => [...prev, { name: f.name, size: f.size }]) // 先占位
       setUploadProg((prev) => ({ ...prev, [key]: 0 }))
@@ -456,6 +457,12 @@ function NewOrder({ client, onDone }: { client: Client; onDone: () => void }) {
               </button>
             </div>
           </Field>
+
+          {(scanFiles.length + images.length) > 0 && (
+            <p className="-mt-1 text-[12px] text-stone-400">
+              已暂存 {scanFiles.length + images.length} 个文件（选择即上传至 COS；未下单取消后，超 24 小时自动回收）
+            </p>
+          )}
 
           <Field label="设计要求" required>
             <textarea

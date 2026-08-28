@@ -12,7 +12,7 @@ globalThis.localStorage = {
   removeItem(k) { delete this._data[k] },
 }
 
-const { orderPoints, orderCount, scopeLabel, designerAlias } = await import('../src/lib/store.ts')
+const { orderPoints, orderCount, scopeLabel, designerAlias, isFileTooLarge } = await import('../src/lib/store.ts')
 const { toothLabel, toothSort } = await import('../src/types/index.ts')
 
 test('toothLabel: 仅显示 FDI 牙位编号，不带方位字眼', () => {
@@ -58,4 +58,9 @@ test('designerAlias: 只显示姓氏花名', () => {
 test('scopeLabel: 非马龙桥/非自定义订单无范围文案', () => {
   assert.equal(scopeLabel({ type: 'quanci', custom: false, teeth: ['11'] }), '')
   assert.equal(scopeLabel({ type: 'malong', arch: undefined, custom: false, teeth: [] }), '马龙桥 · 全口')
+})
+
+test('isFileTooLarge: 1GB 边界（2.6 前端预校验）', () => {
+  assert.equal(isFileTooLarge({ name: 'a.stl', size: 1024 * 1024 * 1024 }, 1024), false)
+  assert.equal(isFileTooLarge({ name: 'a.stl', size: 1024 * 1024 * 1024 + 1 }, 1024), true)
 })

@@ -3,6 +3,9 @@ import { authenticate, saveSession, type Session } from '@/lib/store'
 import { apiLogin, isBackendMode } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
+/** 创建账号咨询电话（账号由平台统一分配；后续改号码只改这里） */
+const ACCOUNT_HELP_PHONE = '19157091215'
+
 /* 左屏装饰：左上 + 右下角衬托的叶脉弧线（平滑贝塞尔） */
 function Veins() {
   return (
@@ -38,6 +41,7 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [showDemo, setShowDemo] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
 
   const submit = async () => {
     if (isBackendMode()) {
@@ -146,6 +150,16 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
             >
               登 录
             </button>
+
+            <p className="text-center">
+              <button
+                type="button"
+                onClick={() => setShowCreate(true)}
+                className="text-[13.5px] text-stone-500 underline-offset-4 transition-colors duration-150 hover:text-[#1e5c46] hover:underline"
+              >
+                没有账号？点此创建账号
+              </button>
+            </p>
           </form>
 
           <div className="mt-10 border-t border-stone-200 pt-4">
@@ -165,6 +179,36 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
           </div>
         </div>
       </div>
+
+      {/* 创建账号提示弹窗（纯文字展示，号码见常量 ACCOUNT_HELP_PHONE） */}
+      {showCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6" onClick={() => setShowCreate(false)} role="dialog" aria-modal="true">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between">
+              <h3 className="text-[18px] font-semibold text-stone-900">创建账号</h3>
+              <button
+                type="button"
+                onClick={() => setShowCreate(false)}
+                className="text-stone-400 transition-colors hover:text-stone-700"
+                aria-label="关闭"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+            <p className="mt-4 text-[14.5px] leading-relaxed text-stone-600">
+              账号由平台统一分配。如需创建账号，请联系该电话号码：
+              <span className="font-semibold text-[#1e5c46]">{ACCOUNT_HELP_PHONE}</span>
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowCreate(false)}
+              className="mt-6 w-full rounded-full bg-[#1e5c46] py-2.5 text-[14px] font-medium text-[#faf9f5] transition-all duration-150 hover:bg-[#2a5139] active:scale-[0.99]"
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

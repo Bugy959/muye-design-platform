@@ -89,16 +89,16 @@ export interface OrderImage {
   name: string
   dataUrl?: string
   size?: number // 字节数，用于上传列表显示文件大小
-  key?: string  // OSS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
+  key?: string  // COS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
   url?: string  // 签名下载地址（后端返回，可短时有效）
 }
 
-/** 上传文件（扫描文件 / 设计文件）：演示版小文件内嵌 dataUrl 可下载；大文件走 OSS，存 key */
+/** 上传文件（扫描文件 / 设计文件）：演示版小文件内嵌 dataUrl 可下载；大文件走 COS，存 key */
 export interface OrderFile {
   name: string
   dataUrl?: string
   size?: number // 字节数，用于上传列表显示文件大小
-  key?: string  // OSS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
+  key?: string  // COS 文件 key（大文件上云后后端返回，见《服务器部署详细指南.md》第 12 章）
   url?: string  // 签名下载地址（后端返回，可短时有效）
 }
 

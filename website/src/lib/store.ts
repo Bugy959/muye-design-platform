@@ -979,7 +979,7 @@ export async function createAccountAsync(input: Parameters<typeof createAccount>
 const EMBED_LIMIT = 1500 * 1024 // 单文件约 1.5MB
 
 export async function readOrderFile(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
-  // 大文件在后端模式优先走 OSS 直传（真实内容不丢失）；OSS 未配置/失败时回退为仅记录文件名
+  // 大文件在后端模式优先走 COS 直传（真实内容不丢失）；COS 未配置/失败时回退为仅记录文件名
   if (file.size > EMBED_LIMIT && isBackendMode()) {
     try {
       const uploaded = await uploadOrderFile(file, onProgress)
@@ -1012,7 +1012,7 @@ function uploadCheckpointKey(file: { name: string; size: number; lastModified?: 
 
 /** 分片直传（可断点续传）：并发上传未完成分片，全部完成后合并。
  *  2.5 健壮性：单个分片 PUT 失败重试 3 次（指数退避）；complete 阶段 uploadId 失效
- *  （如超过 OSS 分片生命周期）时清检查点、重新 init 整个重传一次，再失败才放弃。 */
+ *  （如超过 COS 分片生命周期）时清检查点、重新 init 整个重传一次，再失败才放弃。 */
 async function uploadMultipart(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {
   const token = tokenOf()
   if (!token) throw new Error('未登录')
@@ -1145,8 +1145,8 @@ export async function downloadFileNow(file: { name: string; dataUrl?: string; ke
   }
   a.click()
 }/**
- * 上传口扫/照片到 OSS，返回订单可保存的文件对象（大文件 key 模式）。
- * ≤50MB 单次直传；>50MB 分片直传（自动断点续传）。依赖后端已配置 OSS，否则后端返回 400。
+ * 上传口扫/照片到 COS，返回订单可保存的文件对象（大文件 key 模式）。
+ * ≤50MB 单次直传；>50MB 分片直传（自动断点续传）。依赖后端已配置 COS，否则后端返回 503。
  * @param onProgress 可选，上传进度回调 { uploaded, total, percent }
  */
 export async function uploadOrderFile(file: File, onProgress?: (p: { uploaded: number; total: number; percent: number }) => void): Promise<OrderFile> {

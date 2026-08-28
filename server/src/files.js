@@ -1,11 +1,11 @@
-// 木叶设计平台后端 —— 大文件上云（阿里云 OSS 预签名直传/下载）
-// 说明：文件不经过本服务器，浏览器拿到预签名地址后直接上传到 OSS；
+// 木叶设计平台后端 —— 大文件上云（腾讯云 COS 预签名直传/下载）
+// 说明：文件不经过本服务器，浏览器拿到预签名地址后直接上传到 COS；
 //       数据库/订单里只存文件 key，下载时再由后端换成短期签名地址。
 // 支持：
 //   - 小文件：单次 PUT（预签名直传）
 //   - 大文件：分片直传（multipart，浏览器逐片 PUT，可断点续传）
 // 文档：仓库根目录《服务器部署详细指南.md》第 12 章
-import OSS from 'ali-oss'
+import COS from 'cos-nodejs-sdk-v5'
 import crypto from 'node:crypto'
 import { db, now } from './db.js'
 
@@ -15,39 +15,44 @@ export const MAX_FILE_SIZE = 1024 * 1024 * 1024
 export const UPLOAD_PRESIGN_TTL = 3600
 /** 下载预签名有效期：2 小时 */
 export const DOWNLOAD_PRESIGN_TTL = 7200
+/** COS 默认地域（可用 COS_REGION 覆盖） */
+export const COS_DEFAULT_REGION = 'ap-shanghai'
 
 let client = null
 let clientCfg = null
 
-/** 判断是否已配置 OSS（未配置时一切 OSS 功能降级为不可用，不影响其它接口） */
-export function ossConfigured() {
-  return !!(process.env.OSS_BUCKET && process.env.OSS_ACCESS_KEY_ID && process.env.OSS_ACCESS_KEY_SECRET)
+/** 判断是否已配置 COS（未配置时一切 COS 功能降级为不可用，不影响其它接口） */
+export function cosConfigured() {
+  return !!(process.env.COS_BUCKET && process.env.COS_SECRET_ID && process.env.COS_SECRET_KEY)
 }
 
-/** 惰性创建 OSS client；环境变量变化时自动重建（避免缓存过期配置） */
-function oss() {
+/** 惰性创建 COS client；环境变量变化时自动重建（避免缓存过期配置） */
+function cos() {
   const cfg = {
-    region: process.env.OSS_REGION || 'oss-cn-hangzhou',
-    bucket: process.env.OSS_BUCKET,
-    accessKeyId: process.env.OSS_ACCESS_KEY_ID,
-    accessKeySecret: process.env.OSS_ACCESS_KEY_SECRET,
+    region: process.env.COS_REGION || COS_DEFAULT_REGION,
+    bucket: process.env.COS_BUCKET,
+    secretId: process.env.COS_SECRET_ID,
+    secretKey: process.env.COS_SECRET_KEY,
   }
-  if (!cfg.bucket || !cfg.accessKeyId || !cfg.accessKeySecret) {
+  if (!cfg.bucket || !cfg.secretId || !cfg.secretKey) {
     client = null
     clientCfg = null
-    throw Object.assign(new Error('未配置 OSS 环境变量（OSS_BUCKET / OSS_ACCESS_KEY_ID / OSS_ACCESS_KEY_SECRET）'), { expose: true, status: 503 })
+    throw Object.assign(new Error('未配置 COS 环境变量（COS_BUCKET / COS_SECRET_ID / COS_SECRET_KEY）'), { expose: true, status: 503 })
   }
   if (!client || !clientCfg || clientCfg.region !== cfg.region || clientCfg.bucket !== cfg.bucket ||
-      clientCfg.accessKeyId !== cfg.accessKeyId || clientCfg.accessKeySecret !== cfg.accessKeySecret) {
-    client = new OSS({
-      region: cfg.region,
-      accessKeyId: cfg.accessKeyId,
-      accessKeySecret: cfg.accessKeySecret,
-      bucket: cfg.bucket,
-    })
+      clientCfg.secretId !== cfg.secretId || clientCfg.secretKey !== cfg.secretKey) {
+    client = new COS({ SecretId: cfg.secretId, SecretKey: cfg.secretKey })
     clientCfg = cfg
   }
   return client
+}
+
+/** 把 COS 回调风格 API 包装成 Promise */
+function callCos(api, params) {
+  return new Promise((resolve, reject) => {
+    const c = cos()
+    c[api](params, (err, data) => (err ? reject(err) : resolve(data)))
+  })
 }
 
 /** 生成随机文件 key（按日期分目录 + uuid，防猜测） */
@@ -62,15 +67,29 @@ function validateNameSize(filename, size) {
   if (size > MAX_FILE_SIZE) throw Object.assign(new Error('文件不能超过 1GB 上限'), { expose: true })
 }
 
+/**
+ * 生成带签名的操作地址（单次 PUT / 分片 part PUT / 下载）。
+ * 用 SDK getObjectUrl：本地 HMAC 签名（无网络请求），Expires 秒后过期。
+ */
+function signedUrl(key, { method = 'get', query = {}, expires = UPLOAD_PRESIGN_TTL } = {}) {
+  const params = {
+    Bucket: process.env.COS_BUCKET,
+    Region: process.env.COS_REGION || COS_DEFAULT_REGION,
+    Key: key,
+    Method: method,
+    Expires: expires,
+    Sign: true,
+  }
+  if (Object.keys(query).length > 0) params.Query = query
+  if (String(method).toUpperCase() === 'PUT') params.Headers = { 'Content-Type': 'application/octet-stream' }
+  return callCos('getObjectUrl', params).then((d) => d.Url)
+}
+
 /** 单次上传（小文件）：预签名 PUT 地址，浏览器直接传 */
-export function getUploadTarget(filename, size) {
+export async function getUploadTarget(filename, size) {
   validateNameSize(filename, size)
   const key = makeKey(filename)
-  const uploadUrl = oss().signatureUrl(key, {
-    method: 'PUT',
-    expires: UPLOAD_PRESIGN_TTL,
-    'Content-Type': 'application/octet-stream',
-  })
+  const uploadUrl = await signedUrl(key, { method: 'PUT', expires: UPLOAD_PRESIGN_TTL })
   return { key, uploadUrl }
 }
 
@@ -78,18 +97,22 @@ export function getUploadTarget(filename, size) {
 export async function initMultipartUpload(filename, size) {
   validateNameSize(filename, size)
   const key = makeKey(filename)
-  const { uploadId } = await oss().initMultipartUpload(key)
-  return { key, uploadId }
+  const { UploadId } = await callCos('multipartInit', {
+    Bucket: process.env.COS_BUCKET,
+    Region: process.env.COS_REGION || COS_DEFAULT_REGION,
+    Key: key,
+  })
+  return { key, uploadId: UploadId }
 }
 
 /** 分片上传第二步：给某个分片签发预签名 PUT 地址 */
-export function getUploadPartUrl(key, uploadId, partNumber) {
+export async function getUploadPartUrl(key, uploadId, partNumber) {
   const n = Number(partNumber)
   if (!Number.isInteger(n) || n < 1 || n > 10000) throw Object.assign(new Error('分片编号不正确'), { expose: true })
-  return oss().signatureUrl(key, {
+  return signedUrl(key, {
     method: 'PUT',
     expires: UPLOAD_PRESIGN_TTL,
-    subResource: { partNumber: n, uploadId: String(uploadId) },
+    query: { partNumber: n, uploadId: String(uploadId) },
   })
 }
 
@@ -98,14 +121,20 @@ export async function completeMultipartUpload(key, uploadId, parts) {
   if (!Array.isArray(parts) || parts.length === 0) throw Object.assign(new Error('缺少分片信息'), { expose: true })
   const ok = parts.every((p) => p && Number.isInteger(Number(p.number)) && Number(p.number) >= 1 && /^"?[0-9a-f]{32}"?$/i.test(String(p.etag || '').trim()))
   if (!ok) throw Object.assign(new Error('分片信息不正确'), { expose: true })
-  const list = parts.map((p) => ({ number: Number(p.number), etag: String(p.etag).trim() }))
-  await oss().completeMultipartUpload(String(key), String(uploadId), list)
+  const list = parts.map((p) => ({ PartNumber: Number(p.number), ETag: String(p.etag).trim() }))
+  await callCos('multipartComplete', {
+    Bucket: process.env.COS_BUCKET,
+    Region: process.env.COS_REGION || COS_DEFAULT_REGION,
+    Key: String(key),
+    UploadId: String(uploadId),
+    Parts: list,
+  })
   return true
 }
 
 /** 把 key 换成短期可下载地址（私有桶必须签名，否则一律 403） */
 export function getDownloadUrl(key, expires = DOWNLOAD_PRESIGN_TTL) {
-  return oss().signatureUrl(key, { expires })
+  return signedUrl(key, { method: 'get', expires })
 }
 /* ---------------- 上传登记与孤儿回收（V2.10 第二轮：1.8） ----------------
  * uploads 表：upload-token / upload-init 时登记，upload-complete 标记完成；
@@ -145,7 +174,7 @@ function localIsoAgo(hours) {
 }
 
 /** 孤儿回收：删除「创建超过 maxAgeHours、仍未 complete、且未被订单引用」的上传记录。
- *  OSS 对象删除默认关闭（交给桶生命周期规则兜底），显式设置 OSS_ENABLE_CLEANUP=true 才执行。
+ *  COS 对象删除默认关闭（交给桶生命周期规则兜底），显式设置 COS_ENABLE_CLEANUP=true 才执行。
  *  每分钟最多跑一次（force 可绕过，供测试/启动时用）。返回删除条数。 */
 let lastSweepAt = 0
 export function sweepExpiredUploads({ maxAgeHours = 24, force = false, createdBefore } = {}) {
@@ -158,8 +187,14 @@ export function sweepExpiredUploads({ maxAgeHours = 24, force = false, createdBe
     if (uploadBoundToOrder(r.key)) continue
     db.prepare(`DELETE FROM uploads WHERE key = ?`).run(r.key)
     deleted += 1
-    if (process.env.OSS_ENABLE_CLEANUP === 'true' && ossConfigured()) {
-      try { oss().delete(r.key) } catch { /* 删除失败交给桶生命周期规则兜底 */ }
+    if (process.env.COS_ENABLE_CLEANUP === 'true' && cosConfigured()) {
+      try {
+        callCos('deleteObject', {
+          Bucket: process.env.COS_BUCKET,
+          Region: process.env.COS_REGION || COS_DEFAULT_REGION,
+          Key: r.key,
+        })
+      } catch { /* 删除失败交给桶生命周期规则兜底 */ }
     }
   }
   lastSweepAt = nowMs

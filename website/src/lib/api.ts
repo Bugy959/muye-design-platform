@@ -35,7 +35,7 @@ export function isBackendMode(): boolean {
 /** API 请求超时（毫秒）：网络卡住时不让界面一直等待，默认 20s */
 export const API_TIMEOUT_MS = 20_000
 
-/** 带超时的 fetch：超时后中止并抛出「请求超时」错误（大文件 OSS 直传不走这里） */
+/** 带超时的 fetch：超时后中止并抛出「请求超时」错误（大文件 COS 直传不走这里） */
 export async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(new Error('请求超时')), timeoutMs)
@@ -177,12 +177,12 @@ export const apiRemoveAssignment = (token: string, assignmentId: string) =>
 export const apiSaveDesignParam = (token: string, clientId: string, innerCrown: number, occlusalCut: number, proximalCut: number) =>
   apiFetch<{ ok: boolean }>('/admin/design-params', { method: 'POST', token, body: { clientId, innerCrown, occlusalCut, proximalCut } })
 
-/* ---------------- 大文件（OSS 直传，见《服务器部署详细指南.md》第 12 章） ---------------- */
+/* ---------------- 大文件（COS 直传，见《服务器部署详细指南.md》第 12 章） ---------------- */
 
 export const apiGetUploadToken = (token: string, name: string, size: number) =>
   apiFetch<{ key: string; uploadUrl: string }>('/files/upload-token', { method: 'POST', token, body: { name, size } })
 
-/** 把文件直接 PUT 到 OSS 预签名地址（不经过后端服务器） */
+/** 把文件直接 PUT 到 COS 预签名地址（不经过后端服务器） */
 export async function apiUploadFile(uploadUrl: string, file: File): Promise<void> {
   const response = await fetch(uploadUrl, {
     method: 'PUT',
@@ -196,7 +196,7 @@ export async function apiUploadFile(uploadUrl: string, file: File): Promise<void
 export const apiUploadInit = (token: string, name: string, size: number) =>
   apiFetch<{ key: string; uploadId: string }>('/files/upload-init', { method: 'POST', token, body: { name, size } })
 
-/** 分片上传第二步：给某个分片签发 OSS 预签名 PUT 地址 */
+/** 分片上传第二步：给某个分片签发 COS 预签名 PUT 地址 */
 export const apiUploadPartUrl = (token: string, key: string, uploadId: string, partNumber: number) =>
   apiFetch<{ uploadUrl: string }>('/files/upload-part-url', { method: 'POST', token, body: { key, uploadId, partNumber } })
 
@@ -207,7 +207,7 @@ export const apiUploadComplete = (token: string, key: string, uploadId: string, 
 /** 下载链接实时签名（1.13）：点击下载时后端校验归属并重新签发，页面挂久不再 403 */
 export const apiGetDownloadUrl = (token: string, key: string) =>
   apiFetch<{ url: string }>('/files/download-url', { method: 'POST', token, body: { key } })
-/** 上传一个分片（Blob），返回 OSS 返回的 ETag（需 OSS CORS 的 ExposeHeaders 包含 ETag） */
+/** 上传一个分片（Blob），返回 COS 返回的 ETag（需 COS CORS 的 ExposeHeaders 包含 ETag） */
 export async function apiUploadPart(uploadUrl: string, blob: Blob): Promise<string> {
   const response = await fetch(uploadUrl, {
     method: 'PUT',
@@ -216,6 +216,6 @@ export async function apiUploadPart(uploadUrl: string, blob: Blob): Promise<stri
   })
   if (!response.ok) throw new Error(`分片上传失败（${response.status}）`)
   const etag = response.headers.get('ETag')
-  if (!etag) throw new Error('分片上传缺少 ETag（请检查 OSS CORS ExposeHeaders 是否包含 ETag）')
+  if (!etag) throw new Error('分片上传缺少 ETag（请检查 COS CORS ExposeHeaders 是否包含 ETag）')
   return etag
 }

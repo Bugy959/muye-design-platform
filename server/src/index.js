@@ -4,7 +4,8 @@ import express from 'express'
 import helmet from 'helmet'
 import { routes } from './routes.js'
 import { sweepExpiredSessions } from './maintenance.js'
-import { sweepExpiredUploads } from './files.js'
+import { sweepExpiredUploads, cosConfigured } from './files.js'
+import { db } from './db.js'
 
 const PORT = process.env.PORT || 3001
 
@@ -43,7 +44,11 @@ export function createApp() {
     next()
   })
 
-  app.get('/api/health', (req, res) => res.json({ ok: true, service: 'muye-design-server', time: new Date().toISOString() }))
+  app.get('/api/health', (req, res) => {
+  let dbOk = false
+  try { db.prepare('SELECT 1').get(); dbOk = true } catch { /* 探活失败 */ }
+  res.json({ ok: dbOk, service: 'muye-design-server', db: dbOk, cos: cosConfigured(), time: new Date().toISOString() })
+})
   app.use('/api', routes)
   app.use((req, res) => res.status(404).json({ error: '接口不存在' }))
 

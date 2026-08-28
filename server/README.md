@@ -8,7 +8,7 @@
 | 项目 | 选择 | 原因 |
 |------|------|------|
 | 运行时 | Node.js ≥ 22.13（内置 `node:sqlite` 自 22.13 起默认可用） | 与前端同一语言，维护简单 |
-| 框架 | Express（业务）+ ali-oss（OSS 大文件直传） | 成熟、资料多、招人容易 |
+| 框架 | Express（业务）+ cos-nodejs-sdk-v5（COS 大文件直传） | 成熟、资料多、招人容易 |
 | 数据库 | SQLite（Node 内置 `node:sqlite`） | 零安装、单文件好备份；量大了可平迁 MySQL，表结构已按通用 SQL 设计 |
 | 密码 | scrypt 加密（Node 内置） | 永不存明文 |
 | 登录 | 令牌（token）7 天有效 | 改密码/删账号后令牌立即失效 |
@@ -17,11 +17,11 @@
 
 ```bash
 cd server
-npm install        # 首次：安装依赖（Express + ali-oss）
+npm install        # 首次：安装依赖（Express + cos-nodejs-sdk-v5）
 npm start          # 启动，默认 http://localhost:3001
 ```
 
-验证：浏览器打开 `http://localhost:3001/api/health`，看到 `{"ok":true}` 即正常。
+验证：浏览器打开 `http://localhost:3001/api/health（返回 `db` / `cos` 探活字段）`，看到 `{"ok":true}` 即正常。
 
 首次启动会自动建库（`server/data/muye.db`）并写入种子数据：
 演示账号与演示版一致（admin / muye2026；mingzhou、hengmei、yahe / 123456；li、wang、zhao、sun、zhou / 123456），
@@ -72,27 +72,27 @@ npm start          # 启动，默认 http://localhost:3001
 | POST | `/admin/orders/:id/dispatch` | 管理 | 未分配订单重新派发 |\n| POST | `/files/download-url` | 文件 | 实时签名下载地址（按角色校验 key 归属，1.13） |
 
 
-## 大文件上云（OSS 直传，2026-08-23）
+## 大文件上云（腾讯云 COS 直传，2026-08-28）
 
 口扫文件/照片/设计稿走**对象存储直传**，不经过本服务器（详见根目录《服务器部署详细指南.md》第 12 章）。
 
-- 流程：浏览器向后端 `POST /api/files/upload-token` 申请凭证 → 直接把文件 PUT 到 OSS → 订单只存文件 key → 下载时后端把 key 换成短时签名地址（bootstrap 自动处理）。
-- 大文件（>50MB）自动走**分片直传**：`/files/upload-init` → `/files/upload-part-url` → `/files/upload-complete`，浏览器逐片上传、断点续传；OSS CORS 的 ExposeHeaders 须包含 `ETag`。
+- 流程：浏览器向后端 `POST /api/files/upload-token` 申请凭证 → 直接把文件 PUT 到 COS → 订单只存文件 key → 下载时后端把 key 换成短时签名地址（bootstrap 自动处理）。
+- 大文件（>50MB）自动走**分片直传**：`/files/upload-init` → `/files/upload-part-url` → `/files/upload-complete`，浏览器逐片上传、断点续传；COS CORS 的 ExposeHeaders 须包含 `ETag`。
 - 预签名有效期：上传 1 小时、下载 2 小时（`server/src/files.js`）。
-- **上传登记与孤儿回收**（2026-08-25）：upload-token/upload-init 登记 `uploads` 表，upload-part-url/upload-complete 校验 key+uploadId 归属当前账号；`sweepExpiredUploads()` 清理「超时且未关联订单」的孤儿记录（`OSS_ENABLE_CLEANUP=true` 时顺带删 OSS 对象）。
+- **上传登记与孤儿回收**（2026-08-25）：upload-token/upload-init 登记 `uploads` 表，upload-part-url/upload-complete 校验 key+uploadId 归属当前账号；`sweepExpiredUploads()` 清理「超时且未关联订单」的孤儿记录（`COS_ENABLE_CLEANUP=true` 时顺带删 COS 对象）。
 - **下载实时签名**（2026-08-25）：`POST /api/files/download-url { key }` 按角色校验归属后重新签发，前端点击下载/预览时调用，页面挂久不再 403。
 - 环境变量（未配置时上传接口返回 503，其余接口不受影响；`server/src/files.js`）：
 
 | 变量 | 说明 |
 |---|---|
-| `OSS_REGION` | 地域，如 `oss-cn-hangzhou`（默认值） |
-| `OSS_BUCKET` | 存储桶名（私有读写） |
-| `OSS_ACCESS_KEY_ID` | AccessKey ID |
-| `OSS_ACCESS_KEY_SECRET` | AccessKey Secret |
+| `COS_REGION` | 地域，如 `ap-shanghai`（默认值） |
+| `COS_BUCKET` | 存储桶名（`名字-1250000000` 格式，私有读写） |
+| `COS_SECRET_ID` | SecretId（API 密钥） |
+| `COS_SECRET_KEY` | SecretKey（API 密钥） |
 | `DB_BUSY_TIMEOUT` | 5000 | SQLite 并发写等待毫秒（WAL 下避免偶发 SQLITE_BUSY） |
-| `OSS_ENABLE_CLEANUP` | 关 | =true 时孤儿回收顺带删除 OSS 对象（默认交给桶生命周期规则） |
+| `COS_ENABLE_CLEANUP` | 关 | =true 时孤儿回收顺带删除 COS 对象（默认交给桶生命周期规则） |
 
-> 安全相关环境变量：`CORS_ORIGIN`（跨域白名单，生产必设）、`LOGIN_MAX_PER_MINUTE`（登录限流，默认 5）、`TRUST_PROXY`（nginx 反代层数，默认 1）、`JSON_BODY_LIMIT`（请求体上限，默认 10mb）、`DB_BUSY_TIMEOUT`（并发写等待，默认 5000）、`OSS_ENABLE_CLEANUP`（孤儿回收是否删 OSS 对象）。
+> 安全相关环境变量：`CORS_ORIGIN`（跨域白名单，生产必设）、`LOGIN_MAX_PER_MINUTE`（登录限流，默认 5）、`TRUST_PROXY`（nginx 反代层数，默认 1）、`JSON_BODY_LIMIT`（请求体上限，默认 10mb）、`DB_BUSY_TIMEOUT`（并发写等待，默认 5000）、`COS_ENABLE_CLEANUP`（孤儿回收是否删 COS 对象）、`UPLOAD_MAX_PER_MINUTE`（上传接口限流，默认 30 次/分钟/账号）。
 
 
 - 所有写操作校验登录与角色；医院只能动自己的订单，设计师只能接匹配范围内的单
@@ -102,7 +102,7 @@ npm start          # 启动，默认 http://localhost:3001
 
 ## 上线前还要做的事（见根目录《服务器部署整改方案.md》）
 
-1. ~~口扫文件/照片改传对象存储（OSS/COS）~~ ✅ 代码已实现（2026-08-23），待配置 OSS 环境变量后启用
+1. ~~口扫文件/照片改传对象存储~~ ✅ 已切腾讯云 COS（2026-08-28），待配置 COS 环境变量后启用
 2. HTTPS + 域名 + ICP 备案
 3. 数据库每日自动备份
 4. ~~CORS 收紧~~ ✅ 已实现（2026-08-25）：设 `CORS_ORIGIN` 环境变量即可；另已内置登录限流（`LOGIN_MAX_PER_MINUTE`，默认 5 次/分钟）、helmet 安全头、JSON 限制 10mb（`JSON_BODY_LIMIT` 可覆盖）
