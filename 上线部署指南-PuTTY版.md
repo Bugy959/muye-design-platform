@@ -100,7 +100,7 @@ npm install -g pm2
 ### 2.4 拉取项目代码并构建
 
 ```bash
-git clone <你的仓库地址> /var/www/muye
+git clone https://github.com/Bugy959/muye-design-platform.git /var/www/muye
 cd /var/www/muye/website
 npm ci
 npm run build
