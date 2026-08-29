@@ -40,7 +40,6 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
   const [showPw, setShowPw] = useState(false)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
-  const [showDemo, setShowDemo] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
 
   const submit = async () => {
@@ -162,21 +161,6 @@ export function Login({ onLogin }: { onLogin: (s: Session) => void }) {
             </p>
           </form>
 
-          <div className="mt-10 border-t border-stone-200 pt-4">
-            <button
-              className="font-mono text-[11.5px] uppercase tracking-[0.18em] text-stone-400 transition-colors hover:text-stone-600"
-              onClick={() => setShowDemo(!showDemo)}
-            >
-              {showDemo ? '收起演示账号 ▲' : '演示账号 ▼'}
-            </button>
-            {showDemo && (
-              <div className="mt-3 space-y-1 font-mono text-[13px] tabular-nums text-stone-500">
-                <p>管理端：admin / muye2026</p>
-                <p>医院：mingzhou · hengmei · yahe / 123456</p>
-                <p>设计师：li · wang · zhao · sun · zhou / 123456</p>
-              </div>
-            )}
-          </div>
         </div>
       </div>
 
