@@ -55,3 +55,6 @@ doc-tooth-chart.png
 logo-clean.png
 logo-original.jpg
 logo-white-check.jpg
+# 腾讯云密钥下载文件与运行时部署配置（含真实密钥，禁止入库）
+SecretKey*.csv
+server/ecosystem.config.cjs

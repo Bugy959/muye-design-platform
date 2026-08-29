@@ -1,8 +1,8 @@
-// 部署用 pm2 配置示例：复制为 ecosystem.config.js 后填入真实密钥即可
+// 部署用 pm2 配置示例：复制为 ecosystem.config.cjs 后填入真实密钥即可（后缀必须 .cjs，因 server 是 ESM 包）
 //   cd /var/www/muye/server
-//   cp ecosystem.config.example.js ecosystem.config.js
-//   nano ecosystem.config.js     # 修改 COS_* 等（见《上线部署指南-PuTTY版.md》2.5）
-//   pm2 start ecosystem.config.js && pm2 save && pm2 startup
+//   cp ecosystem.config.example.cjs ecosystem.config.cjs
+//   nano ecosystem.config.cjs    # 修改 COS_* 等（见《上线部署指南-PuTTY版.md》2.5）
+//   pm2 start ecosystem.config.cjs && pm2 save && pm2 startup
 module.exports = {
   apps: [
     {
